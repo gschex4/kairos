@@ -26,7 +26,11 @@ def _require(name: str) -> str:
 
 
 def _optional(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    # Treat a present-but-empty value (e.g. `KAIROS_DRY_RUN_BANKROLL_USD=` in
+    # .env) the same as absent, so the default applies instead of returning ""
+    # (which would crash float()/int() parsing downstream).
+    val = os.environ.get(name, "").strip()
+    return val if val else default
 
 
 @dataclass(frozen=True)
