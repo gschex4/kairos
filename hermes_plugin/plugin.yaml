@@ -1,0 +1,40 @@
+# Hermes plugin manifest for Kairos.
+# Loaded automatically when this directory is symlinked into ~/.hermes/plugins/
+# and the plugin is enabled with `hermes plugins enable kairos`.
+
+name: kairos
+version: 1.0.0
+description: >
+  FIFA World Cup 2026 betting agent for Polymarket. Wraps bet placement
+  (with half-Kelly sizing, hard rails, and event-window detection) plus the
+  ESPN sports feed as LLM-callable tools.
+author: Grant Schexnailder
+license: MIT
+
+provides_tools:
+  - kairos_fair_value
+  - kairos_evaluate_bet
+  - kairos_get_bankroll
+  - kairos_get_market_price
+  - kairos_check_velocity
+  - kairos_list_matches
+  - kairos_get_match_state
+  - kairos_reconcile_positions
+  - kairos_performance
+  - kairos_vet_signal
+
+provides_hooks:
+  - pre_tool_call   # blocks bets whose reasoning carries injection markers
+
+# Required env. Plugin will error on first tool call if missing.
+requires_env:
+  - POLYMARKET_PRIVATE_KEY
+  - POLYMARKET_FUNDER_ADDRESS
+
+# Optional env this plugin will read if set.
+optional_env:
+  - KAIROS_DRY_RUN
+  - KAIROS_STARTING_BANKROLL_USD
+  - KAIROS_DRY_RUN_BANKROLL_USD
+  - KAIROS_ABSOLUTE_MAX_BET_USD
+  - KAIROS_FOOTBALL_DATA_KEY

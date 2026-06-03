@@ -1,0 +1,43 @@
+[project]
+name = "kairos"
+version = "0.1.0"
+description = "A Hermes-based agent that places World Cup 2026 bets on Polymarket using narrative reasoning over live X data"
+requires-python = ">=3.11"
+dependencies = [
+    # Hermes agent framework — `pip install hermes-agent`
+    "hermes-agent>=0.1.0",
+
+    # Polymarket CLOB v2 client. Verify the exact package name on PyPI;
+    # if `py-clob-client` resolves to v1, install v2 from source per
+    # https://github.com/Polymarket/py-clob-client-v2
+    "py-clob-client>=0.18.0",
+
+    # Wallet + signing
+    "web3>=7.0.0",
+    "eth-account>=0.13.0",
+
+    # Env loading
+    "python-dotenv>=1.0.0",
+
+    # Async HTTP + websockets for live market polling
+    "httpx>=0.27.0",
+    "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

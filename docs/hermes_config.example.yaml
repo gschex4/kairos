@@ -1,0 +1,122 @@
+# Example ~/.hermes/config.yaml for Kairos.
+# Copy or hand-merge this into ~/.hermes/config.yaml. Secrets go in
+# ~/.hermes/.env, not here.
+#
+# Verify after editing:
+#   hermes config show
+#   hermes plugins list
+#   hermes mcp list
+#   hermes model --show
+
+# =============================================================================
+# Model routing strategy
+# =============================================================================
+# Kairos splits work across three roles:
+#
+#   ROLE                        MODEL                          WHY
+#   ----                        -----                          ---
+#   Default main loop           deepseek-chat (V4 Flash)       Cheap triage:
+#                                                              listing matches,
+#                                                              parsing X summaries,
+#                                                              filtering candidates
+#   High-stakes deciders        deepseek-reasoner (V4 Pro)     Per-cron override on
+#                                                              halftime / live polls
+#                                                              where each call may
+#                                                              place a real bet
+#   X firehose (delegated)      grok-4-fast-non-reasoning      xAI-exclusive tool;
+#                                                              child agent only,
+#                                                              zero reasoning cost
+#
+# Cost at our projected volume (~$10-13/month total):
+#   - Flash main loop: ~$1-2/mo (caching makes input near-free for stable prompts)
+#   - Pro override on halftime: ~$1-3/mo
+#   - Grok delegated x_search: ~$8-10/mo (search fees dominate)
+# =============================================================================
+
+model:
+  provider: deepseek
+  default: deepseek-chat
+
+# -----------------------------------------------------------------------------
+# Auxiliary slots — Hermes runs these for housekeeping (compression, titles,
+# routing decisions, etc). They inherit `model.default` when set to `auto`.
+# We leave them on auto so they stay on Flash (cheapest), and explicitly
+# disable vision since Kairos never processes images.
+# -----------------------------------------------------------------------------
+auxiliary:
+  compression:
+    provider: auto
+    model: ''
+  title_generation:
+    provider: auto
+    model: ''
+  web_extract:
+    provider: auto
+    model: ''
+  skills_hub:
+    provider: auto
+    model: ''
+  mcp_routing:
+    provider: auto
+    model: ''
+  approval:
+    provider: auto
+    model: ''
+  vision:
+    provider: auto
+    model: ''     # unused — Kairos has no image inputs
+
+# -----------------------------------------------------------------------------
+# Delegation — when the main agent calls delegate_task("..."), the child
+# runs HERE instead of on the main model. This is how the agent gets x_search:
+# main loop (DeepSeek) delegates "search X for Mexico vs Poland lineups" →
+# child runs on Grok (which has x_search) → child returns synthesized summary →
+# main loop reasons over it.
+#
+# Model alias note: xAI retired grok-4.1-fast on 2026-05-15. Old names alias to:
+#   grok-4-fast-non-reasoning → grok-4.3 + reasoning_effort=none (CHEAPEST)
+#   grok-4-fast-reasoning     → grok-4.3 + reasoning_effort=low
+# We use non-reasoning because the child's only job is "search and summarize" —
+# no chain of thought needed, saves output tokens at $2.50/M.
+# -----------------------------------------------------------------------------
+delegation:
+  provider: xai
+  model: grok-4-fast-non-reasoning
+
+plugins:
+  enabled:
+    - kairos
+    # Bundled plugins worth enabling — uncomment as desired:
+    # - observability/langfuse   # full LLM tracing during paper-trade weeks
+
+# MCP servers. gbrain is your knowledge graph; auto-discovered tools will
+# be exposed as mcp_gbrain_*.
+mcp_servers:
+  gbrain:
+    command: gbrain
+    args: ["serve"]
+    # Hermes strips most env vars from MCP subprocesses. Forward only what
+    # gbrain actually needs. Adjust per gbrain's docs.
+    env:
+      PATH: ${PATH}
+      HOME: ${HOME}
+      # DATABASE_URL: ${GBRAIN_DATABASE_URL}  # if using Postgres/Supabase
+
+# Use bundled skills, including the Polymarket research skill which covers
+# Gamma + CLOB + Data API queries (replaces our deleted src/gamma_client.py).
+skills:
+  enabled:
+    - polymarket
+    - kairos:philosophy
+
+# Terminal backend. Local is correct for Kairos — no untrusted code execution.
+terminal:
+  backend: local
+
+# Timezone matters for cron scheduling. Pin yours.
+timezone: America/Chicago
+
+# Sandbox approval mode. `smart` (default) auto-allows safe commands and
+# prompts on dangerous ones. `manual` prompts on everything. `off` is YOLO.
+approval:
+  dangerous_command_mode: smart
