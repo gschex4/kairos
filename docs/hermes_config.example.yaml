@@ -100,6 +100,13 @@ mcp_servers:
     env:
       PATH: ${PATH}
       HOME: ${HOME}
+      # ISOLATION: GBRAIN_HOME points gbrain at Kairos's OWN brain, separate
+      # from any other gbrain brain on the machine (e.g. a personal/work
+      # knowledge base at the default ~/.gbrain). gbrain appends `.gbrain`,
+      # so GBRAIN_HOME=~/.kairos → brain lives at ~/.kairos/.gbrain.
+      # Set GBRAIN_HOME in ~/.hermes/.env. WITHOUT this, kairos would read and
+      # write into the default brain — cross-contamination.
+      GBRAIN_HOME: ${GBRAIN_HOME}
       # DATABASE_URL: ${GBRAIN_DATABASE_URL}  # if using Postgres/Supabase
 
 # Use bundled skills, including the Polymarket research skill which covers

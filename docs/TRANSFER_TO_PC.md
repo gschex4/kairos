@@ -149,15 +149,21 @@ hermes skills list | grep kairos
 -Path C:\Users\you\.hermes\plugins\kairos -Target C:\Users\you\dev\kairos\hermes_plugin`.
 Or just `xcopy /E` the directory if symlinks are a pain.)
 
-### 7. Register gbrain MCP server
+### 7. Register gbrain MCP server (isolated brain)
+
+Kairos uses its own gbrain brain, separate from any other gbrain brain.
+On a kairos-only PC this is automatic (no other brain exists), but set
+`GBRAIN_HOME` anyway so it's explicit and future-proof:
 
 ```bash
-hermes mcp test gbrain    # confirms the entry in config.yaml works
-hermes mcp list           # should show gbrain and its mcp_gbrain_* tools
+export GBRAIN_HOME=~/.kairos          # add to ~/.hermes/.env too
+gbrain init --pglite                  # brain at ~/.kairos/.gbrain
+hermes mcp test gbrain                # confirms the config.yaml entry works
+hermes mcp list                       # should show gbrain + mcp_gbrain_* tools
 ```
 
-The `brain/` markdown files came over via git, so the knowledge is
-preserved. gbrain just rebuilds its local search index on first run.
+The `brain/` markdown files came over via git, so any seeded knowledge is
+preserved. gbrain rebuilds its local search index on first run.
 
 ### 8. Configure Telegram gateway
 

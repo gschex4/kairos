@@ -81,7 +81,13 @@ use case to not matter.
    POLYMARKET_FUNDER_ADDRESS=0x...
    KAIROS_DRY_RUN=true
    KAIROS_STARTING_BANKROLL_USD=50
+   # Isolate Kairos's gbrain brain from any other gbrain brain on the
+   # machine. gbrain appends `.gbrain`, so this puts it at ~/.kairos/.gbrain,
+   # completely separate from a default ~/.gbrain knowledge base.
+   GBRAIN_HOME=~/.kairos
    ```
+   Also `export GBRAIN_HOME=~/.kairos` in your shell so manual `gbrain`
+   commands (init, sync) target the Kairos brain, not the default one.
 4. Set the default model:
    ```bash
    hermes model
@@ -155,11 +161,20 @@ mcp_servers:
     env:
       PATH: ${PATH}
       HOME: ${HOME}
+      GBRAIN_HOME: ${GBRAIN_HOME}   # isolates Kairos's brain (see Step 1)
 
 terminal:
   backend: local
 
 timezone: America/Chicago
+```
+
+Initialize the Kairos brain once, with `GBRAIN_HOME` set so it lands in its
+own home and not the default `~/.gbrain`:
+```bash
+export GBRAIN_HOME=~/.kairos
+gbrain init --pglite          # creates the brain at ~/.kairos/.gbrain
+gbrain doctor --fast          # should report THIS brain, not another
 ```
 
 Verify after editing:
