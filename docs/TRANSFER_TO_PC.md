@@ -236,6 +236,51 @@ Install Obsidian on the PC, add a vault pointing at `~/dev/kairos/`. You
 should see `logs/` (per-bet markdown + `_kills.md`) and `brain/` (gbrain
 knowledge graph). This is your read interface during the tournament.
 
+### 13. Monitoring via Hermes Desktop (remote viewer) — optional but recommended
+
+Hermes Desktop (released 2026-06-03, v0.15.2) is a native GUI front end for
+Hermes on macOS / Windows / Linux. It shows streaming tool output (every
+`kairos_fair_value`, `kairos_evaluate_bet`, and the Grok `x_search`
+delegation as they happen), a cron pane (view / pause / resume jobs), a file
+browser over `logs/` and `brain/`, and the skills / messaging panes.
+
+The reason it's worth setting up: it can connect to a Hermes running on a
+**different machine**, so you can watch and control the PC's kairos agent
+from your Mac (or any laptop) instead of relying only on Telegram + Obsidian.
+
+NOTE: these flags are days old as of writing — confirm exact names against
+`hermes desktop --help` and the [Desktop docs](https://hermes-agent.nousresearch.com/docs/user-guide/desktop)
+when you set it up.
+
+**On the PC (the agent host) — expose the gateway with the TUI backend:**
+The Desktop remote connection requires the backend to run with `--tui`
+enabled and reachable on a port (default `9119`). Run kairos's Hermes so the
+gateway is up (this is the same process that runs your cron jobs), with the
+dashboard/TUI backend enabled per the docs. Bind it to the LAN, not the
+public internet (see security note below). Generate / note the session
+token the backend prints; you'll paste it into Desktop.
+
+**On your Mac (or any device — the viewer):**
+```bash
+# install Desktop (one of):
+curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --include-desktop
+# or download the macOS installer from the Hermes site, or `hermes desktop` if Hermes is already installed
+```
+Open Hermes Desktop → Settings → Remote gateway → set:
+- Remote URL: `http://<PC-LAN-IP>:9119`  (e.g. `http://192.168.1.50:9119`)
+- Session token: the token from the PC
+
+Use Desktop in **remote mode only** on the Mac. Do NOT run kairos in *local*
+mode there — remote mode keeps the agent and its gbrain on the PC, so your
+EL environment and the default `~/.gbrain` brain stay untouched.
+
+**Security (this is a money-handling agent):**
+The remote gateway is control, not just viewing — through it you can manage
+cron and chat-instruct the agent. Do NOT port-forward `9119` to the open
+internet. Keep it LAN-only, or for access from outside the house use
+**Tailscale** or an **SSH tunnel**. The session token is not sufficient
+protection on its own.
+
 ## Going-live checklist on the PC
 
 Before flipping `KAIROS_DRY_RUN=false`:
@@ -251,6 +296,7 @@ Before flipping `KAIROS_DRY_RUN=false`:
 - [ ] Both cron jobs registered (`hermes cron list`)
 - [ ] Wallet shows your $50 USDC balance in Polymarket UI
 - [ ] You can stop the agent from your phone via Telegram (`/cron pause` test)
+- [ ] (optional) Hermes Desktop remote viewer connects to the PC over LAN
 - [ ] At least 24 hours of DRY_RUN cron output reviewed and the agent's
       reasoning looks sensible
 - [ ] Obsidian vault on the PC opens `~/dev/kairos/` and shows the logs
