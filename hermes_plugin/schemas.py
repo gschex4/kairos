@@ -276,6 +276,31 @@ CHECK_VELOCITY_SCHEMA = {
     },
 }
 
+FIND_MARKETS_SCHEMA = {
+    "type": "object",
+    "description": (
+        "Discover open World Cup markets on Polymarket via the public Gamma "
+        "API. Returns events with their markets — each market's question, "
+        "condition_id, token_ids (YES/NO), current outcome prices, last trade "
+        "price, and liquidity. This is how you FIND markets to bet on: call it "
+        "first, pick the market and token_id you want, then use that token_id "
+        "with kairos_get_market_price / kairos_check_velocity / "
+        "kairos_evaluate_bet. Self-contained — does not require any bundled "
+        "Hermes skill."
+    ),
+    "properties": {
+        "hours_ahead": {
+            "type": "integer",
+            "default": 24,
+            "description": (
+                "Look for matches kicking off within this many hours. Default "
+                "24. Use a larger window early in the tournament for futures "
+                "(group winners, Golden Boot)."
+            ),
+        },
+    },
+}
+
 LIST_MATCHES_SCHEMA = {
     "type": "object",
     "description": (

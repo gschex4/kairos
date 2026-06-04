@@ -27,6 +27,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src import position_ledger, settlement  # noqa: E402
 from src.config import Config  # noqa: E402
 from src.fair_value import FairValueError, fair_value  # noqa: E402
+from src.gamma_client import GammaClient  # noqa: E402
 from src.market_velocity import compute_velocity  # noqa: E402
 from src.polymarket_tool import BetIntent, BetRejected, PolymarketTool  # noqa: E402
 from src.sizing import SizingError  # noqa: E402
@@ -41,6 +42,7 @@ from src.untrusted import fence_untrusted, scan_for_injection  # noqa: E402
 _config: Config | None = None
 _pm_tool: PolymarketTool | None = None
 _espn: ESPNClient | None = None
+_gamma: GammaClient | None = None
 
 
 def _dry_run() -> bool:
@@ -49,7 +51,7 @@ def _dry_run() -> bool:
 
 def _ensure_ready() -> None:
     """Load config + clients on first use. Raises on misconfiguration."""
-    global _config, _pm_tool, _espn
+    global _config, _pm_tool, _espn, _gamma
     if _config is None:
         # In DRY_RUN we can run without wallet creds.
         _config = Config.load(require_wallet=not _dry_run())
@@ -57,6 +59,8 @@ def _ensure_ready() -> None:
         _pm_tool = PolymarketTool(_config)
     if _espn is None:
         _espn = ESPNClient()
+    if _gamma is None:
+        _gamma = GammaClient()
 
 
 def _ok(data: dict) -> str:
@@ -246,6 +250,23 @@ def kairos_vet_signal(args: dict, **_kwargs) -> str:
         "markers": flags,
         "fenced": fence_untrusted(text),
     })
+
+
+def kairos_find_markets(args: dict, **_kwargs) -> str:
+    """Discover open World Cup markets on Polymarket (Gamma API)."""
+    try:
+        _ensure_ready()
+        hours = int(args.get("hours_ahead", 24))
+        events = _gamma.upcoming_world_cup_matches(hours_ahead=hours)
+        out = []
+        for ev in events:
+            ev_d = ev.as_dict()
+            # Trim to keep the payload manageable for the model
+            ev_d["markets"] = ev_d["markets"][:12]
+            out.append(ev_d)
+        return _ok({"events": out, "count": len(out), "hours_ahead": hours})
+    except Exception as e:
+        return _err(f"unexpected {type(e).__name__}: {e}")
 
 
 def kairos_get_match_state(args: dict, **_kwargs) -> str:

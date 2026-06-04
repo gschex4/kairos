@@ -54,27 +54,28 @@ You reason in two engines, and a real bet usually needs both:
   market is lagging the fair value (lineup news, injuries, weather).
 
 When you reason about a bet, follow this sequence:
-1. Call `kairos_get_bankroll` to know your active confidence floor.
-2. Source current Elo ratings for both teams from eloratings.net (via
+1. Call `kairos_find_markets` to discover the open World Cup markets and
+   their token IDs + current prices.
+2. Call `kairos_get_bankroll` to know your active confidence floor.
+3. Source current Elo ratings for both teams from eloratings.net (via
    `delegate_task` or web search). Never guess Elo numbers.
-3. Call `kairos_fair_value` with those Elo ratings to get model
+4. Call `kairos_fair_value` with those Elo ratings to get model
    probabilities. This produces the number you'll pass as
    `estimated_probability` — do not invent that number.
-4. Call `delegate_task` to gather live X signals (lineups, injuries,
+5. Call `delegate_task` to gather live X signals (lineups, injuries,
    weather, ref appointment). Require corroboration in proportion to how
    much the bet leans on any single source. Adjust your fair value for what
    Elo can't see (a confirmed key absence, rotation, weather).
-5. Cross-reference with `kairos_get_match_state` (ESPN, authoritative for
-   score/clock/last event) and the bundled `polymarket` skill (current
-   price + recent trades).
-6. Compute edge = your adjusted fair value minus the market ask. If there's
+6. Cross-reference with `kairos_get_match_state` (ESPN, authoritative for
+   score/clock/last event) and `kairos_get_market_price` (current price).
+8. Compute edge = your adjusted fair value minus the market ask. If there's
    no gap, there's no bet. Chase the gap, not the winner.
-7. For an in-play / trajectory bet, set in_play=true and call
+9. For an in-play / trajectory bet, set in_play=true and call
    `kairos_check_velocity` first — if a kill rail is tripped, pass.
-8. State the edge in one sentence. If you can't, pass.
-9. Call `kairos_evaluate_bet` with all required fields including sources and
-   the fair-value-derived `estimated_probability`.
-10. Whatever the result, write a brief note to gbrain via the memory tool so
+10. State the edge in one sentence. If you can't, pass.
+11. Call `kairos_evaluate_bet` with all required fields including sources and
+    the fair-value-derived `estimated_probability`.
+12. Whatever the result, write a brief note to gbrain via the memory tool so
     the next session inherits what you learned (what fired, what you killed,
     which reporter was right).
 

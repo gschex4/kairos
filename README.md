@@ -43,9 +43,14 @@ into Hermes Agent (NousResearch):
 │   └── philosophy/SKILL.md     # The betting philosophy, loadable as /kairos:philosophy
 ├── src/                        # Real logic — plugin imports from here
 │   ├── config.py               # typed env loader (Kairos-only vars)
+│   ├── gamma_client.py         # Polymarket Gamma API — World Cup market discovery
 │   ├── polymarket_tool.py      # bet placement + safety stack
+│   ├── fair_value.py           # slow engine — Dixon-Coles Poisson from Elo
 │   ├── sizing.py               # half-Kelly + tier ceilings + milestone floors
 │   ├── market_velocity.py      # event window + 30s velocity rails
+│   ├── settlement.py           # P&L + CLV reconciliation (the edge instrument)
+│   ├── position_ledger.py      # double-bet guard + performance summary
+│   ├── untrusted.py            # prompt-injection defense
 │   ├── sports_feed.py          # ESPN (primary) + football-data.org backup
 │   ├── logging_setup.py        # markdown logs for Obsidian + kill log
 │   └── main.py                 # offline smoke test only

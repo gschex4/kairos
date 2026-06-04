@@ -109,12 +109,13 @@ mcp_servers:
       GBRAIN_HOME: ${GBRAIN_HOME}
       # DATABASE_URL: ${GBRAIN_DATABASE_URL}  # if using Postgres/Supabase
 
-# Use bundled skills, including the Polymarket research skill which covers
-# Gamma + CLOB + Data API queries (replaces our deleted src/gamma_client.py).
+# Market discovery is a first-party tool (kairos_find_markets), so the
+# bundled `polymarket` skill is NOT required — leave it out unless your
+# Hermes install actually ships it (check: hermes skills list | grep polymarket).
 skills:
   enabled:
-    - polymarket
     - kairos:philosophy
+    # - polymarket   # optional; only if present in your Hermes install
 
 # Terminal backend. Local is correct for Kairos — no untrusted code execution.
 terminal:

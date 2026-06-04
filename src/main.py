@@ -356,6 +356,40 @@ def smoke_test() -> int:
         results.append(False)
     _pl.reset(config)
 
+    # Gamma market-discovery parser (pure, offline)
+    print("\n--- Gamma discovery parser sub-test ---")
+    from src.gamma_client import parse_event
+    mock_event = {
+        "id": "12345",
+        "slug": "mexico-vs-poland",
+        "title": "Mexico vs Poland",
+        "startDate": "2026-06-13T18:00:00Z",
+        "markets": [
+            {
+                "conditionId": "0xcond_abc",
+                "question": "Will Mexico win?",
+                "clobTokenIds": "[\"0xtokenYES\", \"0xtokenNO\"]",  # JSON-string form
+                "outcomePrices": "[\"0.55\", \"0.45\"]",
+                "lastTradePrice": 0.54,
+                "endDate": "2026-06-13T20:00:00Z",
+                "volume": 12000,
+                "liquidity": 8000,
+            }
+        ],
+    }
+    ev = parse_event(mock_event)
+    if (ev and ev.title == "Mexico vs Poland" and len(ev.markets) == 1
+            and ev.markets[0].token_ids == ["0xtokenYES", "0xtokenNO"]
+            and abs(ev.markets[0].outcome_prices[0] - 0.55) < 1e-6
+            and ev.markets[0].condition_id == "0xcond_abc"):
+        print(f"  [pass-expected] Gamma event parsed "
+              f"(2 tokens, prices {ev.markets[0].outcome_prices}, "
+              f"JSON-string arrays handled)")
+        results.append(True)
+    else:
+        print(f"  FAIL: Gamma parse wrong: {ev}")
+        results.append(False)
+
     # Prompt-injection scan
     print("\n--- Prompt-injection sub-tests ---")
     from src.untrusted import scan_for_injection

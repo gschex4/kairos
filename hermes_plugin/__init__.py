@@ -46,6 +46,12 @@ def register(ctx):
         handler=tools.kairos_check_velocity,
     )
     ctx.register_tool(
+        name="kairos_find_markets",
+        toolset="kairos",
+        schema=schemas.FIND_MARKETS_SCHEMA,
+        handler=tools.kairos_find_markets,
+    )
+    ctx.register_tool(
         name="kairos_list_matches",
         toolset="kairos",
         schema=schemas.LIST_MATCHES_SCHEMA,

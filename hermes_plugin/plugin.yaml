@@ -12,6 +12,7 @@ author: Grant Schexnailder
 license: MIT
 
 provides_tools:
+  - kairos_find_markets
   - kairos_fair_value
   - kairos_evaluate_bet
   - kairos_get_bankroll

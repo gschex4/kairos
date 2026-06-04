@@ -212,9 +212,14 @@ hermes plugins list   # verify "kairos" shows enabled
 hermes chat -q "List your tools that start with kairos_"
 ```
 
-You should see six tools: `kairos_evaluate_bet`, `kairos_get_bankroll`,
-`kairos_get_market_price`, `kairos_check_velocity`, `kairos_list_matches`,
-`kairos_get_match_state`.
+You should see eleven tools: `kairos_find_markets`, `kairos_fair_value`,
+`kairos_evaluate_bet`, `kairos_get_bankroll`, `kairos_get_market_price`,
+`kairos_check_velocity`, `kairos_list_matches`, `kairos_get_match_state`,
+`kairos_reconcile_positions`, `kairos_performance`, `kairos_vet_signal`.
+
+Note: `kairos_find_markets` does World Cup market discovery via Polymarket's
+public Gamma API, so Kairos does NOT depend on Hermes's bundled `polymarket`
+skill (which isn't present in every install).
 
 ## Step 4: install the philosophy skill
 
@@ -271,7 +276,7 @@ First, call kairos_list_matches with today and tomorrow's dates in YYYYMMDD form
 to get the list of matches with ESPN event_ids and kickoff times. \
 Then for each match in that window: \
 (1) call kairos_get_match_state with the event_id to get authoritative metadata, \
-(2) use the polymarket skill to find the relevant Polymarket markets and pull current prices, \
+(2) call kairos_find_markets to discover the relevant Polymarket markets and their token IDs + current prices, \
 (3) call delegate_task with a query like 'search X for confirmed starting lineups, \
 last-minute injury news, weather, and referee appointment for {home} vs {away} \
 World Cup match on {date}. Return what you find with the specific tweet URLs as \
@@ -282,7 +287,6 @@ citations. Discard anonymous accounts and unsourced rumors.' \
 call kairos_evaluate_bet with the required fields. \
 Pass on anything that does not meet the philosophy's confidence and source bars. \
 Write a brief summary of what you considered to memory via the memory tool." \
-  --skill polymarket \
   --skill kairos:philosophy \
   --deliver telegram \
   --name kairos-prematch-scan
