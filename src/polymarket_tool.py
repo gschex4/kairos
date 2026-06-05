@@ -191,6 +191,14 @@ class PolymarketTool:
         out: list[Trade] = []
         for t in raw or []:
             try:
+                # Defensive: the public Data API ignores an unrecognized `market`
+                # filter and returns cross-market trades. Drop any trade whose
+                # asset (clobTokenId) doesn't match the requested token, so an
+                # unknown/fake token yields no trades rather than cross-market
+                # prices the velocity rail would misread as a huge single jump.
+                asset = t.get("asset")
+                if asset is not None and str(asset) != str(token_id):
+                    continue
                 # Polymarket trade timestamp can come as unix seconds, unix ms,
                 # or ISO string. Handle all three defensively.
                 ts_raw = (
