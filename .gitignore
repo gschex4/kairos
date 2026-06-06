@@ -30,3 +30,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Kalshi secrets - NEVER commit (RSA private key + key-bearing auth helper)
+hermes_skills/**/*.pem
+hermes_skills/**/kalshi_auth.py
