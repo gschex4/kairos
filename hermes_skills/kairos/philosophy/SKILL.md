@@ -536,6 +536,16 @@ curl -s "https://api.elections.kalshi.com/trade-api/v2/markets/{TICKER}" | \
 
 ## Kalshi Order Placement (Verified)
 
+> ⚠️ **DO NOT place orders by hand.** Bet placement is CODE-ENFORCED: call the
+> `kairos_evaluate_bet` tool, which sizes the bet (half-Kelly), enforces every
+> hard rail (sources, milestone floors, event/velocity kill-rails, position
+> guard, net-of-cost, absolute ceiling) **and** submits the Kalshi order itself.
+> Provide the intent (`token_id` = the market ticker, `side`, `price`,
+> `estimated_probability`, `confidence`, `reasoning`, `sources`) and let the tool
+> place it. The `POST` details below are REFERENCE ONLY — what the tool does
+> internally. Hand-POSTing an order bypasses your safety rails and is forbidden
+> (SOUL.md step 9).
+
 ### Endpoint
 
 ```
