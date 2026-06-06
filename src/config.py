@@ -57,6 +57,13 @@ class Config:
     # Sports data backup oracle (opt-in)
     football_data_api_key: str
 
+    # Kalshi — the active exchange (Polymarket is US-restricted / view-only).
+    # kalshi_key_path points at the RSA private key (.pem) used to sign
+    # portfolio/order requests. Both are optional so dry-run smoke tests load
+    # without credentials; live mode requires them (see require_wallet below).
+    kalshi_api_key: str
+    kalshi_key_path: str
+
     # Note: XAI_API_KEY and TELEGRAM_* are owned by Hermes (live in
     # ~/.hermes/.env). The Kairos plugin never reads them directly —
     # Hermes injects model auth and Telegram delivery itself.
@@ -96,4 +103,6 @@ class Config:
             log_dir=PROJECT_ROOT / _optional("KAIROS_LOG_DIR", "logs"),
             brain_dir=PROJECT_ROOT / _optional("KAIROS_BRAIN_DIR", "brain"),
             football_data_api_key=_optional("KAIROS_FOOTBALL_DATA_KEY"),
+            kalshi_api_key=_optional("KALSHI_API_KEY"),
+            kalshi_key_path=_optional("KALSHI_KEY_PATH", ""),
         )

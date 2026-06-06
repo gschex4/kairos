@@ -402,6 +402,59 @@ def smoke_test() -> int:
         print(f"  FAIL: injection scan (clean={clean}, dirty={dirty})")
         results.append(False)
 
+    # Kalshi tool: the SAME code-enforced rails on the Kalshi backend.
+    # Network-free: velocity hints drive the kill rails; the fail-closed test
+    # stubs the trade fetch so no real Kalshi call is made.
+    print("\n--- Kalshi tool sub-tests (code-enforced rails, Kalshi path) ---")
+    from src.kalshi_tool import KalshiTool
+    ktool = KalshiTool(config)
+    position_ledger.reset(config)
+
+    results.append(_expect_pass(
+        "Kalshi: valid bet, clean velocity (dry_run)",
+        ktool,
+        _sample(token_id="KXWCGAME-26JUN12USAPAR-PAR", confidence=0.80,
+                estimated_probability=0.65, price=0.50,
+                seconds_since_last_event=300, recent_price_movement_30s_pct=0.0),
+    ))
+    results.append(_expect_reject(
+        "Kalshi: no sources cited",
+        ktool,
+        _sample(token_id="KXWCGAME-26JUN14CIVECU-ECU", sources=[],
+                seconds_since_last_event=300, recent_price_movement_30s_pct=0.0),
+    ))
+    results.append(_expect_reject(
+        "Kalshi: within 60s of a goal/red/VAR (event-window kill)",
+        ktool,
+        _sample(token_id="KXWCGAME-26JUN17GHAPAN-PAN", seconds_since_last_event=40),
+    ))
+    results.append(_expect_reject(
+        "Kalshi: market moved 8% in last 30s (velocity kill)",
+        ktool,
+        _sample(token_id="KXWCROUND-26SEMI-USA", recent_price_movement_30s_pct=0.08),
+    ))
+    results.append(_expect_pass(
+        "Kalshi: first bet on a ticker",
+        ktool,
+        _sample(token_id="KXDUP-26", confidence=0.80, estimated_probability=0.65,
+                price=0.50, seconds_since_last_event=300, recent_price_movement_30s_pct=0.0),
+    ))
+    results.append(_expect_reject(
+        "Kalshi: duplicate bet on same ticker (position guard)",
+        ktool,
+        _sample(token_id="KXDUP-26", confidence=0.80, estimated_probability=0.65,
+                price=0.50, seconds_since_last_event=300, recent_price_movement_30s_pct=0.0),
+    ))
+    # Fail-closed in-play: stub the fetch to "no data" so this stays offline.
+    ktool._fetch_recent_trades = lambda ticker, lookback_seconds=60: []  # type: ignore
+    results.append(_expect_reject(
+        "Kalshi: in-play bet, no live data (fail CLOSED)",
+        ktool,
+        _sample(token_id="KXNODATA-26", in_play=True, confidence=0.80,
+                estimated_probability=0.65, price=0.50),
+    ))
+    position_ledger.reset(config)
+
     passed = sum(results)
     total = len(results)
     print(f"\n--- {passed}/{total} sub-tests passed ---")
