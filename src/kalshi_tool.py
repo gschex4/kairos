@@ -85,12 +85,17 @@ class KalshiTool:
             return self.config.dry_run_bankroll_usd
         try:
             bal = self._get_client().get_balance()
-            raw = None
             if isinstance(bal, dict):
+                # Prefer the precise dollars string; fall back to integer cents.
+                bd = bal.get("balance_dollars")
+                if bd is not None:
+                    return float(bd)
                 raw = bal.get("balance")
                 if raw is None:
                     raw = bal.get("available_balance") or bal.get("cash")
-            return float(raw) / 100.0 if raw is not None else self.config.dry_run_bankroll_usd
+                if raw is not None:
+                    return float(raw) / 100.0
+            return self.config.dry_run_bankroll_usd
         except Exception:
             return self.config.dry_run_bankroll_usd
 
@@ -120,7 +125,8 @@ class KalshiTool:
                     price = float(yp) / 100.0 if yp is not None else None
                 if price is None:
                     continue
-                size = _to_float(t.get("count")) or 0.0
+                size = (_to_float(t.get("count")) or _to_float(t.get("taker_count"))
+                        or _to_float(t.get("size")) or 0.0)
                 out.append(Trade(timestamp=ts, price=price, size=size))
             except (TypeError, ValueError, KeyError):
                 continue
