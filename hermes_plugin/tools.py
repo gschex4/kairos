@@ -29,7 +29,8 @@ from src.config import Config  # noqa: E402
 from src.fair_value import FairValueError, fair_value  # noqa: E402
 from src.gamma_client import GammaClient  # noqa: E402
 from src.market_velocity import compute_velocity  # noqa: E402
-from src.polymarket_tool import BetIntent, BetRejected, PolymarketTool  # noqa: E402
+from src.kalshi_tool import KalshiTool  # noqa: E402  -- active exchange backend
+from src.polymarket_tool import BetIntent, BetRejected  # noqa: E402  -- reused intent + exception
 from src.sizing import SizingError  # noqa: E402
 from src.sports_feed import ESPNClient  # noqa: E402
 from src.untrusted import fence_untrusted, scan_for_injection  # noqa: E402
@@ -40,7 +41,8 @@ from src.untrusted import fence_untrusted, scan_for_injection  # noqa: E402
 # -----------------------------------------------------------------------------
 
 _config: Config | None = None
-_pm_tool: PolymarketTool | None = None
+# Active betting backend is Kalshi (Polymarket is retired / US-restricted).
+_pm_tool: KalshiTool | None = None
 _espn: ESPNClient | None = None
 _gamma: GammaClient | None = None
 
@@ -56,7 +58,7 @@ def _ensure_ready() -> None:
         # In DRY_RUN we can run without wallet creds.
         _config = Config.load(require_wallet=not _dry_run())
     if _pm_tool is None:
-        _pm_tool = PolymarketTool(_config)
+        _pm_tool = KalshiTool(_config)
     if _espn is None:
         _espn = ESPNClient()
     if _gamma is None:

@@ -5,9 +5,9 @@
 name: kairos
 version: 1.0.0
 description: >
-  FIFA World Cup 2026 betting agent for Polymarket. Wraps bet placement
-  (with half-Kelly sizing, hard rails, and event-window detection) plus the
-  ESPN sports feed as LLM-callable tools.
+  FIFA World Cup 2026 betting agent for Kalshi (CFTC-regulated). Wraps bet
+  placement (with half-Kelly sizing, code-enforced hard rails, and event-window
+  detection) plus the ESPN sports feed as LLM-callable tools.
 author: Grant Schexnailder
 license: MIT
 
@@ -29,8 +29,8 @@ provides_hooks:
 
 # Required env. Plugin will error on first tool call if missing.
 requires_env:
-  - POLYMARKET_PRIVATE_KEY
-  - POLYMARKET_FUNDER_ADDRESS
+  - KALSHI_API_KEY
+  - KALSHI_KEY_PATH
 
 # Optional env this plugin will read if set.
 optional_env:

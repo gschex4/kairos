@@ -72,12 +72,17 @@ class Config:
     def load(cls, require_wallet: bool = True) -> "Config":
         # The wallet credentials are only required when we actually want to
         # touch Polymarket. For pure dry-run smoke tests we can skip them.
+        # Kalshi is the active exchange; its creds are what's required to trade.
+        # Polymarket is retired (US-restricted, view-only) — kept optional only
+        # for legacy/back-compat, never required.
+        pk = _optional("POLYMARKET_PRIVATE_KEY")
+        funder = _optional("POLYMARKET_FUNDER_ADDRESS")
         if require_wallet:
-            pk = _require("POLYMARKET_PRIVATE_KEY")
-            funder = _require("POLYMARKET_FUNDER_ADDRESS")
+            kalshi_api_key = _require("KALSHI_API_KEY")
+            kalshi_key_path = _require("KALSHI_KEY_PATH")
         else:
-            pk = _optional("POLYMARKET_PRIVATE_KEY")
-            funder = _optional("POLYMARKET_FUNDER_ADDRESS")
+            kalshi_api_key = _optional("KALSHI_API_KEY")
+            kalshi_key_path = _optional("KALSHI_KEY_PATH", "")
 
         starting = float(_optional("KAIROS_STARTING_BANKROLL_USD", "50"))
         return cls(
@@ -103,6 +108,6 @@ class Config:
             log_dir=PROJECT_ROOT / _optional("KAIROS_LOG_DIR", "logs"),
             brain_dir=PROJECT_ROOT / _optional("KAIROS_BRAIN_DIR", "brain"),
             football_data_api_key=_optional("KAIROS_FOOTBALL_DATA_KEY"),
-            kalshi_api_key=_optional("KALSHI_API_KEY"),
-            kalshi_key_path=_optional("KALSHI_KEY_PATH", ""),
+            kalshi_api_key=kalshi_api_key,
+            kalshi_key_path=kalshi_key_path,
         )
