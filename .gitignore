@@ -18,9 +18,12 @@ venv/
 brain/.pglite/
 brain/.gbrain-cache/
 
-# Runtime state — machine-specific, never commit. The position ledger must NOT
-# travel Mac→PC or the PC would think it holds positions the Mac recorded.
-logs/_positions.json
+# Runtime state — machine-specific, never commit. Per-decision bet markdown
+# (src/logging_setup.py), the kill/event logs, and the position ledger (which
+# must NOT travel Mac→PC or the PC would think it holds positions the Mac
+# recorded). Keep the directory itself via the tracked .gitkeep.
+logs/*
+!logs/.gitkeep
 
 # OS
 .DS_Store
