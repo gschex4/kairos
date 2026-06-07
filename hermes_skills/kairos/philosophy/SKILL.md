@@ -604,9 +604,9 @@ Orders submitted at the `yes_ask` price may fill BELOW the ask if there are rest
 
 **Recommendation:** Submit limit orders at the ask or slightly below. If there's depth in the orderbook, the fill may come back cheaper.
 
-## Position Management (Also: Reconciliation Workflow)
+## Bankroll Deployment & Sizing
 
-The `kairos_reconcile_positions` tool (NON-FUNCTIONAL on this Kalshi host — Polymarket plugin) requires POLYMARKET_PRIVATE_KEY — not configured (we use Kalshi). Reconcile via direct Kalshi API calls instead (RSA-signed): `GET /portfolio/positions` and `GET /portfolio/settlements` (plus `GET /portfolio/balance`), using the Python signing recipe in `references/kalshi-api.md` (the **Reconciliation** section). Call balance + positions + settlements in one script with fresh timestamps per call. URL base: `https://api.elections.kalshi.com` (no `/trade-api/v2` suffix).
+> The post-trade workflow — monitoring open positions, reconciliation, realized P&L, **CLV**, and cash-out criteria — now lives in the **kairos-settlement** skill. Load that skill for settle / reconcile / performance / cash-out tasks.
 
 ### Deployment Strategy
 
@@ -625,17 +625,6 @@ With a small bankroll (~$50), position sizing follows this priority:
 | **Total** | | **45%** | **$22.83** | Leaves $27 for future plays |
 
 Half-Kelly formula used: `bet% = 0.5 * (edge / (1 - price))`, capped at 25% of bankroll for high-confidence plays, lower for thin liquidity.
-
-### Monitoring
-
-A cron job (`par-position-watch`) runs hourly 8am-10pm using deepseek-chat (Fast). It runs `position_watch.sh` which fetches current prices on all open positions, then the LLM evaluates whether any position has moved >3¢ from entry — if so, it alerts the group.
-
-### Cash-Out Criteria
-
-- **Price reaches 80%+ of fair value** → consider taking profit (diminishing returns on remaining edge)
-- **Volume implodes** (OI drops >50%) → liquidity risk, consider exiting
-- **Lineup news contradicts the thesis** → cut position immediately (e.g., key Paraguayan starter ruled out)
-- **New better edge emerges and bankroll is tight** → rotate out of weakest position
 
 ## Interacting with Kalshi via curl (Public Endpoints)
 
