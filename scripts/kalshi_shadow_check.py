@@ -19,8 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Resolve credentials WITHOUT putting them in any command line.
-LIVE_KEY = Path(r"C:\Users\gsche\.hermes\skills\kairos\kairos-philosophy\references\kalshi_key.pem")
-LIVE_AUTH = Path(r"C:\Users\gsche\.hermes\skills\kairos\kairos-philosophy\references\kalshi_auth.py")
+LIVE_KEY = Path(r"C:\Users\gsche\.hermes\kalshi\kalshi_key.pem")
+LIVE_AUTH = Path(r"C:\Users\gsche\.hermes\kalshi\kalshi_auth.py")
 if not os.environ.get("KALSHI_API_KEY"):
     try:
         m = re.search(r'KALSHI-ACCESS-KEY"\s*:\s*"([0-9a-fA-F-]{36})"', LIVE_AUTH.read_text())

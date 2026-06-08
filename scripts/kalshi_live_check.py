@@ -12,8 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-AUTH = Path(r"C:\Users\gsche\.hermes\skills\kairos\kairos-philosophy\references\kalshi_auth.py")
-KEY = Path(r"C:\Users\gsche\.hermes\skills\kairos\kairos-philosophy\references\kalshi_key.pem")
+AUTH = Path(r"C:\Users\gsche\.hermes\kalshi\kalshi_auth.py")
+KEY = Path(r"C:\Users\gsche\.hermes\kalshi\kalshi_key.pem")
 if not os.environ.get("KALSHI_API_KEY"):
     m = re.search(r'KALSHI-ACCESS-KEY"\s*:\s*"([0-9a-fA-F-]{36})"', AUTH.read_text())
     if m:
