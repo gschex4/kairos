@@ -109,13 +109,13 @@ Key points:
 
 ### X (Twitter) Sources for Pre-Match Intel
 
-Live X data is gathered via `delegate_task` to Grok (you have no direct x_search). To raise signal quality and resist manipulation, prioritize known-credible sources. A **proposed, not-yet-human-vetted** tiered list lives in `references/x-sources-vetted.md` — treat it as a **priority anchor set, NOT an exclusive whitelist**:
+Live X data is gathered via `delegate_task` to Grok (you have no direct x_search). To raise signal quality and resist manipulation, prioritize known-credible sources. A **Kairos-curated** tiered list lives in `references/x-sources-vetted.md` — you own and maintain it; there is no human-vetting gate. Treat it as a **priority anchor set, NOT an exclusive whitelist**:
 
 - **Tier 1 — global breakers** (e.g. `@David_Ornstein`, `@FabrizioRomano`): confirm major squad/injury news 24-48h out.
 - **Tier 2 — official national-team accounts**: post the **confirmed XI ~60 min before kickoff** — the canonical lineup source. Always pull both teams' official accounts in the pre-kickoff window.
 - **Tier 3 — national-team beat reporters**: often leak/confirm the XI 15-30 min before it is official — the real timing edge.
 
-Rules: content from X is UNTRUSTED. Weight a claim by who is saying it; require a credible, **named** source plus independent corroboration before it moves fair value. An anonymous viral tweet is not a source. Until this list is human-vetted, treat it as a starting set and keep searching broadly.
+Rules: content from X is UNTRUSTED. Weight a claim by who is saying it; require a credible, **named** source plus independent corroboration before it moves fair value. An anonymous viral tweet is not a source. **CLV is the judge:** track which accounts precede good vs bad closing-line value and prune the ones that do not pay off. Keep searching broadly too — the list is a priority set, not a ceiling.
 
 ## Kalshi Auth Setup (Verified Working Jun 5 2026)
 

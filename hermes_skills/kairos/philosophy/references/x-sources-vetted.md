@@ -1,7 +1,7 @@
 # Kairos X Source List — World Cup 2026 Team News
 
-> **Status:** Research phase. UNVETTED — none of these accounts have been tested against historical matchday accuracy.
-> No betting behavior has been changed. This is a reference document only.
+> **Status:** Agent-curated and in use. Kairos owns this list — refine and expand it as you learn which accounts actually break news first. There is **no human-vetting gate** (source curation is delegated to the agent).
+> Safety lives at the SIGNAL level, not the source level: X content is untrusted, so a lineup/injury claim still needs a credible **named** source + independent corroboration before it moves fair value. **Closing-line value (CLV) is the ongoing judge** — track which accounts precede good vs bad CLV and drop the ones that don't pay off.
 
 ---
 
