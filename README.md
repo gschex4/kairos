@@ -1,7 +1,8 @@
 # Kairos
 
-A Hermes-native agent that places FIFA World Cup 2026 bets on Polymarket
-using narrative reasoning (DeepSeek V4) over live X data (Grok, delegated).
+A Hermes-native agent that places FIFA World Cup 2026 bets on Kalshi
+(CFTC-regulated) using narrative reasoning (DeepSeek V4) over live X data
+(Grok, delegated).
 
 *Kairos* (καιρός) is the ancient Greek word for the opportune moment.
 That is the agent's job: find the moment conditions align for a bet, and
@@ -40,11 +41,14 @@ into Hermes Agent (NousResearch):
 │   ├── tools.py                # Handler functions (thin shim)
 │   └── README.md
 ├── hermes_skills/kairos/
-│   └── philosophy/SKILL.md     # The betting philosophy, loadable as /kairos:philosophy
+│   ├── philosophy/SKILL.md     # Bet discovery, sizing, placement — loadable as /kairos:philosophy
+│   └── settlement/SKILL.md     # Post-trade settlement, P&L, CLV — loadable as /kairos:settlement
 ├── src/                        # Real logic — plugin imports from here
 │   ├── config.py               # typed env loader (Kairos-only vars)
-│   ├── gamma_client.py         # Polymarket Gamma API — World Cup market discovery
-│   ├── polymarket_tool.py      # bet placement + safety stack
+│   ├── kalshi_client.py        # Kalshi REST client — RSA-signed orders + portfolio
+│   ├── kalshi_tool.py          # bet placement + safety stack (the live exchange path)
+│   ├── gamma_client.py         # Polymarket Gamma API — read-only World Cup market discovery
+│   ├── polymarket_tool.py      # legacy Polymarket execution path (retired; US-restricted)
 │   ├── fair_value.py           # slow engine — Dixon-Coles Poisson from Elo
 │   ├── sizing.py               # half-Kelly + tier ceilings + milestone floors
 │   ├── market_velocity.py      # event window + 30s velocity rails
@@ -68,15 +72,18 @@ into Hermes Agent (NousResearch):
 What lives outside `~/dev/kairos/`:
 
 - `~/.hermes/config.yaml` — Hermes runtime config (provider, plugins, MCP servers)
-- `~/.hermes/.env` — `XAI_API_KEY`, `POLYMARKET_PRIVATE_KEY`, etc.
+- `~/.hermes/.env` — Hermes-owned secrets (`XAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `GBRAIN_HOME`). The Kalshi credentials (`KALSHI_API_KEY`, `KALSHI_KEY_PATH`) live in the project `.env`.
 - `~/.hermes/SOUL.md` — Kairos identity
 - `~/.hermes/plugins/kairos` → symlink to `~/dev/kairos/hermes_plugin/`
 - `~/.hermes/skills/kairos/philosophy` → symlink to `~/dev/kairos/hermes_skills/kairos/philosophy/`
+- `~/.hermes/skills/kairos/settlement` → symlink to `~/dev/kairos/hermes_skills/kairos/settlement/`
 - `~/.hermes/cron/jobs.json` — scheduled pre-match scans + halftime polls (auto-managed)
 
 Hermes provides: the `hermes` CLI, the LLM loop, the cron scheduler, the
-Telegram gateway, the bundled `polymarket` skill for Gamma/CLOB reads,
-and MCP auto-discovery (which picks up gbrain as `mcp_gbrain_*` tools).
+Telegram gateway, and MCP auto-discovery (which picks up gbrain as
+`mcp_gbrain_*` tools). Market discovery is now first-party
+(`kairos_find_markets`), so the bundled `polymarket` skill is no longer a
+dependency.
 
 ## Model setup (hybrid: DeepSeek + Grok)
 
@@ -117,12 +124,13 @@ pip install -e . hermes-agent
 python3 -m src.main --smoke-test
 
 # Then per HERMES_WIRING.md:
-# 1. Get xAI API key, paste into ~/.hermes/.env
-# 2. Copy/merge docs/hermes_config.example.yaml → ~/.hermes/config.yaml
-# 3. Symlink hermes_plugin/ + hermes_skills/ into ~/.hermes/
-# 4. Verify x_search works (critical pre-launch test)
-# 5. Configure Telegram gateway
-# 6. Schedule cron jobs for pre-match + halftime
+# 1. Add Kalshi creds to .env (KALSHI_API_KEY, KALSHI_KEY_PATH) — the live exchange
+# 2. Get xAI API key, paste into ~/.hermes/.env
+# 3. Copy/merge docs/hermes_config.example.yaml → ~/.hermes/config.yaml
+# 4. Symlink hermes_plugin/ + hermes_skills/ into ~/.hermes/
+# 5. Verify x_search works (critical pre-launch test)
+# 6. Configure Telegram gateway
+# 7. Schedule cron jobs for pre-match + halftime
 ```
 
 There is no `python -m src.main` for the real agent. The agent runs
@@ -136,44 +144,43 @@ push to a private git repo, clone on the PC, re-create `~/.hermes/.env`
 on the new machine, redo the plugin + skill symlinks, install Hermes,
 configure cron + gateway, configure the PC not to sleep.
 
-## Pre-launch timeline
+## Bring-up sequence
 
-15 days from today (May 27) to kickoff (June 11). Suggested ramp:
+The order that works, from cold install to live trading:
 
-| Days | Work |
-|---|---|
-| 1-2 | Install Hermes locally, configure xAI + DeepSeek keys, **verify x_search works on your tier** (critical gate). Smoke test passes. |
-| 3 | Install plugin + skill symlinks, gbrain MCP, verify `hermes plugins list` and `hermes mcp test gbrain`. |
-| 4 | Configure Telegram gateway, verify bidirectional chat. |
-| 5 | Add bundled `polymarket` skill, copy `SOUL.md`. |
-| 6 | Register the pre-match cron job. First dry-run scan. |
-| 7-10 | DRY_RUN against late-May / early-June international friendlies. Review every cron output for reasoning quality. Adjust philosophy as needed. |
-| 11 | Optional: enable Langfuse observability plugin for full LLM trace capture. |
-| 12-14 | Final paper-trades. Push code + config to private repo. Transfer to PC laptop per `TRANSFER_TO_PC.md`. |
-| 15 (Jun 11) | Flip `KAIROS_DRY_RUN=false`. Watch the first match closely. |
+1. Install Hermes locally, configure xAI + DeepSeek keys, **verify x_search works on your tier** (critical gate). Smoke test passes.
+2. Add Kalshi creds (`KALSHI_API_KEY`, `KALSHI_KEY_PATH`); run the read-only shadow check against live Kalshi (`python scripts/kalshi_shadow_check.py`).
+3. Install plugin + skill symlinks, gbrain MCP; verify `hermes plugins list` and `hermes mcp test gbrain`.
+4. Configure Telegram gateway, verify bidirectional chat.
+5. Copy `SOUL.md`, register the pre-match cron job, run the first dry-run scan.
+6. DRY_RUN against friendlies / group-stage matches. Review every cron output for reasoning quality. Adjust philosophy as needed.
+7. Optional: enable the Langfuse observability plugin for full LLM trace capture.
+8. Final paper-trades. Push to the private repo; transfer to the PC per `TRANSFER_TO_PC.md`.
+9. Flip `KAIROS_DRY_RUN=false`. Watch the first live match closely.
 
 ## What's solid vs what to verify
 
 **Solid and tested (offline):**
 - Project structure, config loading, env handling
 - Hermes plugin registration shape (plugin.yaml + register(ctx) + json.dumps handlers)
-- `PolymarketTool` hard rails (basic validation, sources required)
+- `KalshiTool` hard rails (basic validation, sources required)
 - Philosophy sizing in `src/sizing.py` — floating 10% cap, half-Kelly,
   confidence tiers, milestone floors, exotic halving
 - Code-enforced market velocity + event-window detection over live
-  Polymarket Data API trades
+  Kalshi trade history
 - Markdown logging that Obsidian reads + `_kills.md` + per-bet sizing
   and velocity audits
-- Smoke test (`python3 -m src.main --smoke-test`) — 12 sub-tests, 12 pass
+- Smoke test (`python3 -m src.main --smoke-test`) — 45 sub-tests, 45 pass
 
 **To verify at install time (require live network + accounts):**
 - `XAI_API_KEY` has `x_search` access (critical pre-launch test in
   HERMES_WIRING.md Step 1)
-- Polymarket Data API trade response shape matches what `_fetch_recent_trades`
+- Kalshi credentials authenticate against the portfolio + order endpoints
+  (run the read-only `python scripts/kalshi_shadow_check.py`)
+- Kalshi trade-history response shape matches what `_fetch_recent_trades`
   expects (defensive parsing handles common variations)
 - gbrain MCP server starts under Hermes' filtered env (test with
   `hermes mcp test gbrain`)
-- Bundled `polymarket` skill is installed (`hermes skills list | grep polymarket`)
 - ESPN's hidden API schema for `fifa.world` matches `sports_feed.py`
   (defensive parsing; will degrade gracefully)
 
@@ -181,7 +188,7 @@ configure cron + gateway, configure the PC not to sleep.
 
 All of the following are enforced in code, not in the prompt. See
 `src/sizing.py`, `src/market_velocity.py`, and
-`src/polymarket_tool.py:_check_basic_rails`.
+`src/kalshi_tool.py:_check_basic_rails`.
 
 **Floating per-bet cap:**
 - 10% of current bankroll, recomputed on every bet
