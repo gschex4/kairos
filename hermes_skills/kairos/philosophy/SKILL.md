@@ -1,693 +1,333 @@
----
+﻿---
 name: kairos-philosophy
-title: Kairos Betting Agent — Philosophy, Platform Reference & Operation
-description: > 
-  Complete reference for the Kairos betting agent — philosophy, platform
-  integration (Kalshi), Elo extraction, tool chains, cron operation,
-  and communication routing.
-domain: betting, kalshi, reference
+description: Complete reference for the Kairos betting agent â€” philosophy, platform integration (Kalshi), market monitoring, Elo extraction, tool chains, cron operation, and communication routing.
+category: kairos
 ---
 
-# ⚠️ CRITICAL: Terminal Workdir on Windows Native Git-Bash
+# Kairos â€” World Cup Betting Agent (Kalshi)
 
-The Hermes host is Windows (C:\\Users\\gsche) running **native git-bash (MSYS2)**.
-Git-bash mounts your Windows C drive at `/c/` — so `C:\Users\gsche\.hermes`
-is accessible at `/c/Users/gsche/.hermes/` from within git-bash.
-The terminal's default `cwd` is `C:\Windows\System32` — a Windows path that
-does NOT exist in git-bash's filesystem namespace.
-- Every terminal call WITHOUT an explicit `workdir=` parameter will fail with:
+## Identity
+Disciplined World Cup 2026 betting agent on Kalshi (CFTC-regulated, US-legal). Edge is narrative synthesis: reconcile live X data against Elo-based fair-value estimates. Bet only when edge is stateable in one sentence with a real source.
 
-```
-/bin/bash: line 2: cd: C:\\Users\\gsche: No such file or directory
-```
+## Platform
+- **Kalshi**, not Polymarket. Public API at `api.elections.kalshi.com/trade-api/v2/`
+- **Bet placement: `scripts/place_bet.py` ONLY** â€” the code-enforced script sizes the bet, enforces every rail, journals, and places the RSA-signed order. Never hand-roll `POST /portfolio/events/orders`. (`kairos_evaluate_bet` is a dead Polymarket plugin tool â€” do not attempt.)
+- **Fair value: manual Poisson model** in `references/elo-to-fv-manual.md`. `kairos_fair_value` is also a Polymarket plugin â€” dead, do not attempt.
 
-**ALWAYS pass `workdir="/tmp"` to terminal calls.**
+## Market Re-Discovery Cron
+Run on a schedule (e.g. daily during group stage) to detect structural changes â€” new knockout games appearing in KXWCGAME, markets settling in KXWCGROUPQUAL/KXWCROUND/KXWCSTAGEOFELIM, and series reconfiguration.
 
-This applies to:
-- Direct `terminal()` tool calls
-- `terminal()` calls inside `execute_code()` blocks
+### Step 1 â€” Fetch All Seven Key Series
+Scan the full FIFA WC 2026 surface. Use the paginated Python pattern from `references/kalshi-api-pagination.md` (write script via `write_file`, run via `terminal()` with full Windows path). Series:
+- **KXWCGAME** â€” individual matches (72 group-stage events = 216 markets at baseline; knockout games appear as new events after group stage concludes)
+- **KXWCGROUPQUAL** â€” group qualification (12 events, 48 active markets at baseline)
+- **KXWCROUND** â€” reach round (4 events, 192 markets). These are round-based, NOT team-based: `KXWCROUND-26RO16` (\"Round of 16 Qualifiers\"), `KXWCROUND-26QUAR` (\"Quarterfinals Qualifiers\"), `KXWCROUND-26SEMI` (\"Semifinals Qualifiers\"), `KXWCROUND-26FINAL` (\"Final Qualifiers\"). Each contains 48 team markets (e.g. `KXWCROUND-26SEMI-NL` = Netherlands reaches semis). No individual team searches will match the event title â€” search by event_ticker prefix instead.
+- **KXWCSTAGEOFELIM** â€” stage of elimination (48 events, 336 markets)
+- **KXMENWORLDCUP** â€” tournament winner (1 event, 48 markets)
+- **KXWCGOALLEADER** â€” golden boot (1 event, 33 markets)
+- **KXWCAWARD** â€” individual awards (6 events, ~242 markets)
 
-**The Hermes write_file and patch tools also route through the same broken shell** when writing to `/c/Users/...`. They fail identically to terminal() because they share the CWD.
+### Step 2 â€” Compare vs Known State
+Baseline (Jun 5, 2026): KXWCGAME=72 events/216 mkts, KXWCGROUPQUAL=12/48 active, KXWCROUND=4/192, KXWCSTAGEOFELIM=48/336, KXMENWORLDCUP=1/48, KXWCGOALLEADER=1/33, KXWCAWARD=6/239.
 
-### Harmless Hermes error messages (ignore)
+### Step 3 â€” Flag Structural Changes
+- New events in KXWCGAME (knockout games: tickers contain "R16", "QF", "SF", "FINAL" or feature cross-group matchups)
+- Markets that moved from active â†’ finalized/settled
+- Series with event-count drift (>2 events difference from baseline)
 
-Every `terminal()` call produces these two stderr messages on this host:
-```
-/bin/bash: line 5: C:/Users/gsche/.hermes/cache/terminal/hermes-snap-2392a45e9c26.sh: No such file or directory
-/bin/bash: line 6: C:/Users/gsche/.hermes/cache/terminal/hermes-cwd-2392a45e9c26.txt: No such file or directory
-```
-They are Hermes' internal session-state snapshots trying to write to a path that
-doesn't exist. **These do not affect command execution.** The exit code, stdout,
-and stderr of your actual command are all reliable. The Hermes errors appear
-AFTER your command's output and with a separate bash exit_code=0. Ignore them.
+### Step 4 â€” Output
+If nothing changed: `[SILENT]`. If structural changes detected: list each change with event ticker, market counts, and settlement status. No narrative needed for structural changes â€” just the facts.
 
-### Hidden dependency: git-bash /c/ mount
+## Hourly Position-Watch Cron (`par-position-watch`)
 
-The git-bash environment mounts `C:\` at `/c/`. Use `/c/Users/gsche/`
-to reference anything under the Windows home directory from within terminal() calls.
-Example: `cat /c/Users/gsche/.hermes/config.yaml`. Do NOT use `/home/gsche/`
-(doesn't exist on the Linux side). Do NOT use `C:\Users\gsche\` directly in
-bash commands.
+Every hour 8am-10pm, checks all open match-win positions against their entry prices. Alerts if any has moved â‰¥15% (relative) from entry.
 
-**Reliable workaround** for writing files:
-- Use `skill_manage(action='patch')` — this calls patch internally through its own file I/O that does NOT route through the shell. Preferred for editing skills.
-- Use `terminal()` with shell heredoc (`cat > /path/to/file << 'EOF' ...`) with `workdir="/tmp"` — works for creating arbitrary files.
-- Use `execute_code()` to run Python that writes files directly (the execute_code sandbox runs in its own context).
+### Active Positions (verified Jun 12 ~01:00 UTC from portfolio API)
 
-## What Works vs What's Blocked
+- ~~**Mexico** (MEX-RSA Jun 11) â€” Settled: Mexico won 2-0, position closed.~~ âœ…
+- **Paraguay** (USA-PAR Jun 12) â€” Ticker `KXWCGAME-26JUN12USAPAR-PAR`, 53 shares @ 23.8Â¢ blended ($12.62: 43@24Â¢ + 10@23Â¢ added Jun 11)
+- **Bosnia and Herzegovina** (CAN-BIH Jun 12) â€” Ticker `KXWCGAME-26JUN12CANBIH-BIH`, 2 shares @ 21Â¢ ($0.42)
+- **Ecuador** (CIV-ECU Jun 14) â€” Ticker `KXWCGAME-26JUN14CIVECU-ECU`, 21 shares @ 41Â¢ ($8.61). âš ï¸ This is Ivory Coast vs Ecuador, NOT Ecuador vs CuraÃ§ao.
+- **Panama** (GHA-PAN Jun 17) â€” Ticker `KXWCGAME-26JUN17GHAPAN-PAN`, 15 shares @ 26Â¢ ($3.90)
+- **Czechia** (KOR-CZE Jun 11/12) â€” Ticker `KXWCGAME-26JUN11KORCZE-CZE`, 1 share @ 33Â¢ ($0.33)
+- **France** (tournament winner) â€” Ticker `KXMENWORLDCUP-26-FR`, 1 share @ 21.4Â¢ ($0.16)
+- **Argentina** (tournament winner) â€” Ticker `KXMENWORLDCUP-26-AR`, 3 shares @ ~8.7Â¢ ($0.26)
+- **Ivory Coast** (tournament winner, trade) â€” Ticker `KXMENWORLDCUP-26-CIV`, 250 shares @ 0.4Â¢ ($1.00)
+- **Sweden** (Group F qualification) â€” Ticker `KXWCGROUPQUAL-26F-SWE`, 1 share @ 64Â¢ ($0.64). Placed Jun 11 on injury divergence: Japan missing Endo/Mitoma, Netherlands depleted, Isak-GyÃ¶keres intact.
 
-### Working (Kalshi, public endpoints)
-- 🔹 `GET /events?series_ticker=KXWCGAME` — discover all World Cup game markets
-- 🔹 `GET /events?series_ticker=KXMENWORLDCUP` — tournament winner market
-- 🔹 `GET /markets/{ticker}` — live price (yes_ask, yes_bid, last_price)
-- 🔹 `GET /markets/{ticker}/orderbook` — depth
-- 🔹 `kairos_fair_value(elo_home, elo_away)` — Elo-based model, platform-agnostic
-- 🔹 `kairos_get_match_state(event_id)` (NON-FUNCTIONAL on this Kalshi host — Polymarket plugin; requires POLYMARKET_PRIVATE_KEY. For live state use ESPN directly or `GET .../markets/{ticker}` for current price.)
-- 🔹 List matches / find markets — use `GET https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true` (public, no auth). The `kairos_list_matches` / `kairos_find_markets` plugin tools require POLYMARKET_PRIVATE_KEY (absent) and error on this Kalshi host.
-- 🔹 Elo ratings from eloratings.net via browser_console
+### âš ï¸ Authoritative Position Source
 
-### Working (Kalshi, authenticated endpoints — RSA signing required)
-- 🔹 `GET /portfolio/balance` — account balance
-- 🔹 `POST /portfolio/events/orders` — place orders
-- 🔹 `GET /portfolio/settlements` — settlement history
+**Before any position-watch run, fetch the portfolio API directly.** Never rely on memory or skill docs for ticker/entry-price data â€” positions can be placed by cron jobs you weren't present for, and tickers can be misremembered. 
 
-### Legacy: Polymarket Gamma API (historical only)
+**Portfolio endpoint**: `GET /trade-api/v2/portfolio/positions` (RSA-signed). The `market_positions` array gives ticker, position_fp (shares), market_exposure_dollars, and fees. The `event_positions` array gives event-level aggregation.
 
-The `kairos_find_markets` tool (NON-FUNCTIONAL on this Kalshi host — Polymarket plugin; requires POLYMARKET_PRIVATE_KEY, absent) queries Polymarket's Gamma API. This was the original platform before the US CFTC action made Polymarket view-only. Kalshi is now the active platform — find markets via `GET https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true` (public, no auth).
+**Rule**: Fetch portfolio â†’ cross-reference against skill's position list â†’ update skill if mismatch. Do not hardcode assumptions about which ticker a position is on.
 
-## Data Sources & Extraction Techniques
-
-### Elo Ratings (eloratings.net)
-
-Elo ratings are the **anchor** for `kairos_fair_value`. The site renders ratings in a custom table that does not use standard `<table>/<tr>/<td>` elements, so standard DOM queries fail.
-
-**Working extraction method (browser console):**
-1. Navigate to https://eloratings.net/
-2. Call `browser_console` with expression that reads `document.body.innerText.substring(0, 12000)`
-3. The output is a flat text dump of the full rankings table — every team's rank, name, and Elo rating in order. No parsing needed beyond scanning the lines.
-4. Works without scrolling because the full table is in the DOM; the 12k char limit captures the top ~120-140 teams (all WC teams are within top ~80).
-
-**For the `kairos_fair_value` tool:** Always source Elo numbers from this page. Never guess them.
-
-**Cached reference:** `references/wc-2026-elo-ratings.md` has the full 48-team table as of Jun 5, 2026. Update this file when Elo ratings are refreshed (typically weekly).
-
-### Wikipedia Schedule & Group Data
-
-Wikipedia's 2026 FIFA World Cup page is enormous (~14k+ lines truncated). The browser snapshot tool cannot fully render it.
-
-**Working extraction method (Wikipedia API + browser console):**
-See `references/wikipedia-extraction.md` for the full technique with verified section numbers and API calls.
-
-Key points:
-1. Use the MediaWiki API from browser_console (not `execute_code` — Wikipedia blocks Python's default User-Agent with 403).
-2. Group tables are in sections **15-26** (Group A through Group L).
-3. Match schedule is around section **13** (verify via sections endpoint first).
-
-### ESPN Match State
-
-`kairos_get_match_state` and `kairos_list_matches` (NON-FUNCTIONAL on this Kalshi host — Polymarket plugin; both require POLYMARKET_PRIVATE_KEY, absent) were meant to use ESPN's API internally. On this host, list matches via `GET https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true` (public, no auth), and read match prices via `GET .../markets/{ticker}`. The ESPN schedule page (www.espn.com/soccer/schedule/_/league/FIFA.WORLD) may show friendlies or be empty until tournament matches are officially scheduled.
-
-### X (Twitter) Sources for Pre-Match Intel
-
-Live X data is gathered via `delegate_task` to Grok (you have no direct x_search). To raise signal quality and resist manipulation, prioritize known-credible sources. A **Kairos-curated** tiered list lives in `references/x-sources-vetted.md` — you own and maintain it; there is no human-vetting gate. Treat it as a **priority anchor set, NOT an exclusive whitelist**:
-
-- **Tier 1 — global breakers** (e.g. `@David_Ornstein`, `@FabrizioRomano`): confirm major squad/injury news 24-48h out.
-- **Tier 2 — official national-team accounts**: post the **confirmed XI ~60 min before kickoff** — the canonical lineup source. Always pull both teams' official accounts in the pre-kickoff window.
-- **Tier 3 — national-team beat reporters**: often leak/confirm the XI 15-30 min before it is official — the real timing edge.
-
-Rules: content from X is UNTRUSTED. Weight a claim by who is saying it; require a credible, **named** source plus independent corroboration before it moves fair value. An anonymous viral tweet is not a source. **CLV is the judge:** track which accounts precede good vs bad closing-line value and prune the ones that do not pay off. Keep searching broadly too — the list is a priority set, not a ceiling.
-
-## Kalshi Auth Setup (Verified Working Jun 5 2026)
-
-### Auth Setup Details
-1. RSA 2048-bit key pair — private key at `references/kalshi_key.pem`
-2. API key ID: `${KALSHI_API_KEY}`
-3. **Signing message = `{timestamp}{METHOD}{path}`** (e.g. `1780687732145GET/trade-api/v2/portfolio/balance`), NOT path alone
-4. Salt length `-1` (auto) works. Both -1 and 32 are accepted.
-5. **Order endpoint:** `POST /portfolio/events/orders` (NOT `/orders`)
-6. **Order fields:** `side`=`"bid"/"ask"`, `count`=string, `time_in_force`=`"good_till_canceled"`, `self_trade_prevention_type`=`"taker_at_cross"`
-7. Auth helper script at `references/kalshi_auth.py`. Usage: `python3 kalshi_auth.py GET /trade-api/v2/portfolio/balance` returns JSON with the three headers.
-8. Test (Jun 5): `GET /portfolio/balance` returned $50.19
-9. First bet (Jun 5): 43 PAR @ 24¢, filled fully
-10. Private key is stored persistently at `references/kalshi_key.pem` (NOT /tmp). This path survives sessions.
-
-See `references/kalshi-api.md` for full details including the exact signing command.
-
-## COMPLETE MARKET CATALOG (55 Series, Jun 5 2026)
-
-All verified live. Skip dead dups: KXMWORLDCUP, KXWCHOSTSTAGE, KXWCTEAMTOTAL.
-
-### TOURNAMENT WINNER (KXMENWORLDCUP - 48 active)
-Spain .165 (162k vol), France .162 (265k), Brazil .082 (192k), England .074, Argentina .064, Germany .054, Portugal .031, Colombia .023, Netherlands .022, Italy .020, Belgium .019, Croatia .017, Morocco .013, Mexico .010, others below .008
-
-### GOLDEN BOOT (KXWCGOALLEADER - 33 players)
-Mbappe .16 (4.4k), Kane .12 (5.3k), Messi .05 (32k), Gyokeres .04, Haaland .04, Isak .03, Vinicius Jr .03, Salah .02, Raphinha .02, Dembele .02, Yamal .01, Olise .01
-
-### AWARDS (KXWCAWARD - 6 events, 239 mkts)
-Golden Ball (57 players): Kane .13 (1.4k), Yamal .12 (2.2k), Mbappe .11 (1.5k), Vinicius Jr .09, Bellingham .08, Olise .08, Dembele .05 (2.4k), Messi .03, Raphinha .02, Rodri .02, Nico Williams .02 | Golden Glove (10): Maignan .16, Costa .11, Courtois .06, Martinez ?, Alisson ?, Verbruggen ?, Simon ?, Pickford ?, Livakovic ? | Best Young (12): Yamal .48, Guler .20, Cubarsi .15, Mainoo, Doue, Endrick, Estevao, Huijsen, Vuskovic, Dowman, Zaire-Emery, Karl, O'Reilly | Fair Play (49): Spain .65 (510 vol), France .13, Germany .08
-
-### CONTINENT WINNER (KXWCCONTINENT)
-Europe .71, South America .23, Africa .04, NA .02, Asia .01
-
-### BEST HOST (KXWCBESTHOST)
-Mexico .41, USA .37, Canada .26
-
-### GROUP QUALIFIERS (KXWCGROUPQUAL - 12 groups A-L, 48 mkts)
-Best BUY edges: Haiti (Grp C) .12 (FV .19), Curacao (E) .09 (FV .25), Iraq (I) .14 (FV .17), Panama (L) .30 (FV .43), Jordan (J) .20 (FV .29), Uzbekistan (K) .31 (FV .34), NZ (G) .33 (FV .37)
-Most overpriced SELLs: USA (D) .81 (FV .38), Ghana (L) .49 (FV .15), Ivory Coast (E) .77 (FV .25), Morocco (C) .87 (FV .56)
-
-### MATCH MARKETS - 72 group games, all 3-way lines active
-Opening: MEX vs RSA (Jun 11). Format: KXWCGAME-26{MMMDD}{T1}{T2} with markets -{T1}, -{T2}, -TIE.
-
-### PER-GAME SERIES (72 events each)
-KXWCSPREAD (288), KXWCTOTAL O/U (432), KXWCBTTS (72), KXWC1H (216), KXWC1HSPREAD (144), KXWC1HTOTAL (288), KXWC1HBTTS (72), KXWCKOPENALTIES (22 across KO rounds)
-
-### KNOCKOUT ADVANCEMENT (KXWCROUND - 4 events, 192 mkts)
-RO16/QUAR/SEMI/FINAL per-team. Most liquid: SEMI (MEX .12 10k vol, USA .09 4.3k), QUAR (POR .48 4.8k, MEX .24 3.6k, USA .23 3k), R16 (AUT .28 7k, POR .69 6.7k, BIH .21 6.4k)
-KXWCSTAGEOFELIM (48 events, 336 mkts) - per-team stage of elimination. Very liquid.
-KXWCFURTHESTADVANCING (4 region events). KXWCREGIONKO (7 events). KXWCGROUPWINELIM (12 mkts).
-
-### TEAM PROPS
-KXWCTEAMGOALS (106), KXWCTEAMLEADGOAL (1153 - team top scorer), KXWCTEAM1STGOAL (1162 - 1st goalscorer), KXWCTOTALGOAL (91 tournament thresholds)
-
-### PLAYER PROPS
-KXWCPLAYERGOALS (1081 - will X score), KXWCSQUAD (179 selections), KXWCGOALCOMBO (154 combo). KXSOCCERPLAYMESSI + KXSOCCERPLAYCRON: both play at .99/1.0.
-
-### GROUP STAGE SERIES
-KXWCGROUPWIN (48 mkts - win group), KXWCGROUPWINNER (12 - which group wins WC, C .11), KXWCGROUPORDER (288 exact order), KXWCGROUPBOTTOM (48 bottom), KXWCGSGOALS (96 most/fewest), KXWCGROUPGOALS (24 group totals)
-
-### OUTRIGHT SPECIALS (that exist but may have thin liquidity)
-KXWC1STTIMEWIN (1 mkt .28/.29), KXWC3RDPLACE (48), KXWCBESTHOST (3), KXWCFIFATOP10 (3), KXWCNOEURSA (1 .07/.09), KXWCBESTHOST (MEX .41, USA .37, CAN .26)
-
-**Polymarket is discontinued** — view-only in the US (CFTC action). This agent runs on **Kalshi** (CFTC-regulated, fully operational).
-
-World Cup 2026 markets ARE live on Kalshi's REST API. The platform was fully connected Jun 5, 2026.
-
-### Integration Status (Jun 5, 2026)
-
-| Capability | How |
-|---|---|
-| Elo-based fair value | kairos_fair_value tool (data-source, not platform-bound) |
-| Live match state | ESPN directly, or GET /markets/{ticker} for current price (kairos_get_match_state / kairos_list_matches are NON-FUNCTIONAL — Polymarket plugin, need POLYMARKET_PRIVATE_KEY) |
-| Market discovery | GET /events?series_ticker=KXWCGAME (public) |
-| Price checking | GET /markets/{ticker} (public) |
-| Auth'd endpoints | RSA-PSS signature headers |
-| Order placement | POST /portfolio/events/orders with RSA sig |
-| Bankroll/positions | GET /portfolio/... with RSA sig |
-
-### See also
-
-Before June 11 there are no World Cup matches. The pipeline should:
-1. Scan KXWCGAME series for new markets (none added before matches)
-2. Scan KXWCROUND series for bracket simulation edge
-See `references/environment-topology.md` for the full environment layout (paths, credentials, cron jobs, open positions).
-
-## Pre-tournament Phase (Before June 11)
-
-The `kairos-prematch-scan` cron job runs every 4 hours but will find zero World Cup matches until June 11. Expected behavior:
-
-1. **Confirm tournament date**: First match is June 11, 2026 (KOR vs CZE, MEX vs RSA).
-2. **Kalshi-native (required)**: `kairos_list_matches` (NON-FUNCTIONAL on this Kalshi host — Polymarket plugin; requires POLYMARKET_PRIVATE_KEY, absent). Use `GET /events?series_ticker=KXWCGAME&with_nested_markets=true` directly (public, no auth) to verify no match events exist.
-3. **Check previous runs**: Scan `cron/output/34f8e8d4b5c2/` for the most recent output before repeating full diagnostics.
-4. **Output**: [SILENT] — no matches = nothing to evaluate or bet.
-
-**Important**: The kairos Polymarket-plugin tools (kairos_find_markets, kairos_list_matches, kairos_evaluate_bet, kairos_reconcile_positions, kairos_get_bankroll, kairos_check_velocity, kairos_get_match_state) are NON-FUNCTIONAL on this Kalshi host — they require POLYMARKET_PRIVATE_KEY in the .env file (absent), so they error out. Use the Kalshi REST API instead: find markets / list matches -> `GET /events?series_ticker=KXWCGAME&with_nested_markets=true` (public); prices -> `GET /markets/{ticker}` (public); bankroll -> `GET /portfolio/balance` (RSA-signed); evaluate/size a bet -> the half-Kelly math in this skill, then `POST /portfolio/events/orders` (RSA-signed); reconcile/settle -> `GET /portfolio/positions` and `GET /portfolio/settlements` (RSA-signed).
-
-## ⚠️ CRITICAL: Avoid Hermes ~50KB stdout truncation on large API responses
-
-On native git-bash, `/tmp` is **shared** across `terminal()` calls — files written via `curl -o /tmp/foo.json` in one call persist and are visible in the next call. The real constraint is Hermes' ~50KB stdout cap: large API responses dumped to stdout get truncated, which breaks any piped parser reading that stdout.
-
-**Two working patterns:**
-
-**Pattern A (preferred for small responses — piped, no temp files):** Pipe curl directly into python within a SINGLE terminal() call:
+### Fetch Pattern
 ```bash
-curl -s "https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true&limit=200" | python3 -c "import sys, json; d = json.load(sys.stdin); print(f'{len(d[\"events\"])} events')"
+curl -s 'https://api.elections.kalshi.com/trade-api/v2/markets/{TICKER}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin)['market']; print(d['yes_ask_dollars'], d['yes_bid_dollars'], d['last_price_dollars'])"
 ```
-This keeps the response off your final stdout entirely. Works for responses up to ~50KB (Hermes stdout cap); larger responses need Pattern B.
+Response is nested under `market` key. Fields use `_dollars` suffix (`yes_ask_dollars` not `yes_ask`).
 
-**Pattern B (fetch-and-parse in ONE call):** Fetch and parse in the same terminal() call using a single heredoc:
-```bash
-python3 << 'PYEOF'
-import urllib.request, json
-url = "https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true&limit=200"
-d = json.loads(urllib.request.urlopen(urllib.request.Request(url)).read())
-# process d directly — no intermediate files
-PYEOF
+### Threshold
+`|current - entry| / entry * 100`. Alert only if â‰¥15% relative move. Filters spread noise. If no position qualifies: `[SILENT]`.
+
+**Trade positions** (KXMENWORLDCUP, KXWCGROUPQUAL, KXWCAWARD, KXWCGOALLEADER, and
+any cheap contract held as a re-rate trade): alert threshold is â‰¥50% relative move.
+Bigger moves are news on thin markets; smaller moves are noise. An **up** move â‰¥50%
+is a possible **exit window** â€” check the catalyst and the exit ladder. A **drop** of
+â‰¥50% is a thesis-invalidation signal â€” investigate immediately.
+
+**Exit strategy for trade positions**: see `references/trade-exit-strategy.md` â€”
+sell into the re-rate, don't hold for the outcome.
+
+If a position's ticker returns HTTP error/empty response (as the stale CIVECU ticker does), log the issue but do NOT alert â€” the position exists under the corrected ticker.
+
+### Delivery
+**bold** position names, bullet lists, no tables. One bullet per flagged position: entry price, current price, % move, direction, spread.
+
+## Weekly Price-Monitoring Cron
+Every N hours, run this sequence to track futures/props/awards markets:
+
+### Step 1 â€” Fetch All Four Series in Parallel
+Use terminal() (workdir=/tmp) with curl:
 ```
-This uses Python's `urllib` to fetch directly inside the parser, so the full response stays in Python memory and never hits the ~50KB stdout cap. Use this for large responses (>50KB).
-
-## Series-Wide Market Rediscovery Scanning Pattern
-
-The `wc-market-rediscovery` cron job (8am/8pm daily) needs to check ~52 Kalshi series for new events. Each scan must handle potentially large responses. Verified reliable approach:
-
-### Recommended workflow (Workaround B — single terminal() call)
-
+curl -s 'https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=SERIES&with_nested_markets=true&limit=100'
 ```
-terminal()  # workdir="/tmp"
-  python3 << 'PYEOF'
-  import urllib.request, json
-  
-  BASE = "https://api.elections.kalshi.com/trade-api/v2"
-  series_list = ["KXWCGAME", "KXWCROUND", "KXWCSTAGEOFELIM", ...]
-  
-  for series in series_list:
-      url = f"{BASE}/events?series_ticker={series}&with_nested_markets=true&limit=200"
-      d = json.loads(urllib.request.urlopen(urllib.request.Request(url)).read())
-      events = d.get('events', [])
-      total_mkts = sum(len(e.get('markets',[])) for e in events)
-      # compare against baseline, flag changes
-  PYEOF
-```
+Series to monitor: KXMENWORLDCUP, KXWCGOALLEADER, KXWCAWARD, KXWCGROUPQUAL
 
-### Why this approach
+From JSON, read yes_bid_dollars, yes_ask_dollars, volume per market. Skip markets where yes_bid_dollars is null.
 
-- **Python urllib** fetches directly into memory — no temp files, no stdout truncation risk
-- **Single-terminal call** keeps the full response in Python memory, avoiding the ~50KB Hermes stdout truncation on large API responses (see `references/execute-code-pattern.md`)
-- **Batch parsing** is efficient — all 30+ standard series parse in ~2 seconds
-- **Event status tracking** reveals when markets move from open → finalized/settled
-- **Multi-series scanning** is the norm for market-rediscovery; using one terminal() call with a loop over ALL series is more efficient than per-series curl calls
+### Step 2 â€” Compare vs Baseline
+Maintain a baseline dict in the cron prompt (last-known prices in cents). Compute Î” for each tracked player/team. Reference `references/kalshi-market-baselines.md` for the authoritative baseline.
 
-### What to check per series
+### Step 3 â€” Flag Moves â‰¥ 15% from baseline
+Only report when something moved â‰¥ 15% from its baseline price (relative, NOT flat cents â€” this filters Kalshi spread noise). If nothing: output exactly `[SILENT]`.
 
-| Check | How |
-|---|---|
-| New events | Count events, compare to baseline (see MARKET CATALOG above) |
-| New knockout games | Check KXWCGAME for dates after JUN27 (group stage ends) |
-| Settled markets | Check `market.result` or `market.status == "settled"` |
-| Volume spikes | Aggregate `volume` across all markets in series |
-| Price changes | Compare `yes_ask_dollars` against stored baseline |
+For each flagged mover, brief narrative context: why it moved (tournament narrative shift, team form, injury news, squad depth, award subjectivity).
 
-### Zero-volume expected pattern
+### x_search Fallback
+When `web_search` (Firecrawl) is unconfigured, use `x_search` (xAI/Grok) as substitute for context gathering. It provides sourced answers with inline citations from X posts.
 
-In the pre-tournament period (before Jun 11), ALL series show `vol=0` across every market. This is normal — Kalshi World Cup markets have no trading activity until closer to matchday. **Do not flag zero volume as a finding.**
+## Cron Operation
+- No user present â€” execute fully autonomously, make reasonable decisions
+- Final response auto-delivered â€” do NOT use send_message
+- Markdown: **bold**, *italic*, `code`, ```blocks```, ## headers. No table syntax (use bullet lists)
+- Pass `workdir=/tmp` to every terminal() call
 
-### Baseline reference (from this session)
+## Betting Workflow (match-day)
+0. **Verify the fixture exists.** Before researching or betting any Kalshi market, confirm the match actually appears in the official FIFA World Cup 2026 schedule. Query `x_search "World Cup 2026 {Team1} vs {Team2} group stage schedule"` or browser-navigate to Wikipedia/FIFA.com. Kalshi occasionally creates markets months in advance with placeholder matchups â€” a market existing does NOT mean the fixture is real. A bet on a phantom fixture gets voided and ties up capital.
+1. Discover markets via Kalshi API
+2. Get prices (public endpoint)
+3. Source Elo from eloratings.net
+4. Compute fair value â€” for **match markets**, use the manual Poisson model in `references/elo-to-fv-manual.md`. For **tournament futures** (KXMENWORLDCUP, KXWCROUND, KXWCSTAGEOFELIM, KXWCGROUPQUAL), use the relative-Elo-share method in `references/tournament-futures-fv.md`. Feed it Elo ratings from step 3. The Elo reference includes calibration points to verify your output.
+5. Cross-checks: recent form, squad value delta, head-to-head, climate/heat. See ## Cross-Checks section below for data-gathering tiered fallbacks.
+6. Gather X signals via `delegate_task` (subagents CAN use `x_search` â€” works reliably) or `x_search` directly. Delegate multiple match-research tasks in parallel for speed.
+7. Check bankroll â€” RSA-signed GET /portfolio/balance. **Use the inline Python pattern** (see ## Kalshi Auth â€” Inline Python Pattern below). The standalone `kalshi_auth.py` script path is `/c/Users/gsche/.hermes/kalshi/kalshi_auth.py` but the inline pattern is preferred (avoids subprocess path issues and stale timestamps between auth+curl).
+8. Compute edge = adjusted_fair_value - yes_ask - fee, where fee = 0.07 Ã— price Ã— (1 - price) (Kalshi taker fee, ~1-1.75Â¢ at mid prices â€” a gross edge that fees eat is NOT an edge). If net edge < 3Â¢ (or < 5Â¢ when FV â‰¥ 70%), pass â€” thin edges on high-probability outcomes size too small to matter. See pitfall: "Thin edge on high-probability bets."
+9. **Place bet via the code-enforced script** â€” `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/place_bet.py" buy --ticker T --price 0.24 --prob 0.31 --confidence 0.7 --reasoning "..." --sources "..."` (terminal, workdir=/tmp; add `--type trade --cost X` for re-rate trades, `--dry-run` to preview). The SCRIPT computes the size (confidence-scaled Kelly on TOTAL capital, net of fees), enforces the rails (sources, min net edge, confidence floor, 25%-of-capital cap, $5 cash floor), journals the decision, and places the order. Never compute a share count yourself and never POST `/portfolio/events/orders` directly. A `rejected` status is final â€” pass. (`kairos_evaluate_bet` is a dead Polymarket plugin tool â€” do not attempt.)
+10. Log bet details to memory (or output if memory unavailable)
 
-Standard series scan (Jun 5, 2026):
-```
-KXWC1STTIMEWIN           1        1         0  {'?': 1}
-KXWC3RDPLACE             1       48         0  {'?': 1}
-KXWCAWARD                6      242         0  {'?': 6}
-KXWCBESTHOST             1        3         0  {'?': 1}
-KXWCCONTINENT            1        5         0  {'?': 1}
-KXWCFURTHESTADVANCING    4       42         0  {'?': 4}
-KXWCGOALCOMBO           17      154         0  {'?': 17}
-KXWCGOALLEADER           1       33         0  {'?': 1}
-KXWCGROUPBOTTOM         12       48         0  {'?': 12}
-KXWCGROUPGOALS           2       24         0  {'?': 2}
-KXWCGROUPORDER          12      288         0  {'?': 12}
-KXWCGROUPWIN            12       64         0  {'?': 12}
-KXWCGROUPWINELIM         1       12         0  {'?': 1}
-KXWCGROUPWINNER          1       12         0  {'?': 1}
-KXWCGSGOALS              2       96         0  {'?': 2}
-KXWCPLAYERGOALS         47     1081         0  {'?': 47}
-KXWCREGIONKO             7       54         0  {'?': 7}
-KXWCSQUAD                6      306         0  {'?': 6}
-KXWCTEAM1STGOAL         48     1162         0  {'?': 48}
-KXWCTEAMGOALS           12      106         0  {'?': 12}
-KXWCTEAMLEADGOAL        48     1153         0  {'?': 48}
-KXWCTOTALGOAL           13       91         0  {'?': 13}
-```
+## Trade-Candidate Screening (buy-cheap / sell-into-the-re-rate)
 
-Per-game series (all 72 events, matching KXWCGAME): KXWCSPREAD, KXWCTOTAL, KXWCBTTS, KXWC1H, KXWC1HSPREAD, KXWC1HTOTAL, KXWC1HBTTS.
-KXWCKOPENALTIES: 3 events, 22 mkts (R32=10, R16=8, QF=4).
+Two kinds of position exist â€” know which you're opening:
+- **Conviction / hold-to-resolution** â€” you bet because the outcome happens, and
+  ride to settlement. Most match-win bets. Sized by the script: confidence-scaled Kelly (above).
+- **Trade / re-rate** â€” you buy a *mispriced cheap* contract because a catalyst will
+  push the *price* up, and you **sell into that** before resolution. You do NOT need
+  it to hit $1.00.
 
-### Quick pagination check
+Before answering "who's a good long shot" or opening any cheap (â‰¤15Â¢) position as a
+trade, run the screen in `references/trade-screen.md`. It runs on **any** series, not
+just tournament futures. Four questions, **3 of 4 (catalyst mandatory) = tradeable**:
+1. **Cheap vs. a defensible value?** â€” the *price* is too low, regardless of P(win).
+2. **A dated catalyst that re-rates the price UP, and when?** *(mandatory)* â€” result,
+   draw/bracket reveal, lineup, a favorite stumbling. No catalyst â†’ pass.
+3. **Asymmetric payoff?** â€” bounded premium down, multiple up.
+4. **Can I exit?** â€” book depth now or arriving with the catalyst.
 
-Some series may have >200 events. Check for a `cursor` field in the response:
-```python
-cursor = data.get('cursor', '')
-if cursor:
-    # need to paginate — GET /events?series_ticker=X&cursor={cursor}&limit=200
-```
-KXWCGAME (72 events) and all current series fit in one page.
+**Tournament long-shots** use the five-gate checklist in `trade-screen.md` as one way
+to answer Q1â€“Q2 (squad quality, group path, form, DNA, hedge) â€” it feeds the screen,
+it isn't the screen.
 
-### `.hermes` Config Location
+**Sizing â€” trades are sized by dollars-at-risk, not Kelly.** The premium is the whole
+downside. Trade bucket â‰¤10% of bankroll total; any single trade â‰¤5%.
 
-The Hermes config lives at `C:\\Users\\gsche\\.hermes\\` on the Windows host. In git-bash terminal sessions, access it via `/c/Users/gsche/.hermes/`. Do NOT look for it at `/home/gsche/.hermes/` on the Linux side — it doesn't exist there.
+See `references/trade-exit-strategy.md` for post-entry management â€” the plan is to
+sell into the re-rate, not to hold for the outcome.
 
-### Model / Provider Switching
+## Hard Rails
+- **Autonomous mode: NEVER ask permission to bet.** Operation mode is FULLY AUTONOMOUS. When you have edge + sources + sizing within rails, place the bet and report what you did. Do not say "Want me to place it?", "Ready to go?", or any permission-seeking variant. The only acceptable post-research output is the bet confirmation or an explicit pass-with-reason. Asking permission when rails are green is a process failure that wastes operator attention.
 
-The default model is set in `config.yaml` at `/c/Users/gsche/.hermes/config.yaml`:
+**Code-enforced** (inside `scripts/place_bet.py` â€” a `rejected` status is final, do not route around it):
+- Sourced edge required (no source = no bet)
+- Minimum NET edge 3Â¢ (5Â¢ when FV â‰¥ 70%) â€” edge is measured after the Kalshi taker fee
+- Confidence floor 0.50
+- Conviction sizing: confidence-scaled Kelly (fraction = confidence, clamped 0.50-0.75) of TOTAL capital (cash + WC exposure), capped at 25% of total capital and at cash above the $5 floor
+- Trade sizing: dollars-at-risk â‰¤ 5% of total capital, price â‰¤ 15Â¢
+- Cash floor: no buy that takes cash below $5
 
-```yaml
-model:
-  provider: deepseek
-  default: deepseek-reasoner    # change this line to switch models
-```
+**Agent-enforced** (need live match context the script can't see):
+- Event-window kill (no order within 60s after goal/red/VAR)
+- Market velocity kill (no order if >5% move in 30s)
 
-**deepseek-chat** = v4 Fast (cheap, good for routine cron checks and data collection)
-**deepseek-reasoner** = v4 Pro (stronger reasoning, use for active betting decisions and edge analysis)
+## Sizing
+The script computes size â€” you never do. Conviction: `kelly_fraction * net_edge / (1 - price)` of TOTAL capital, where kelly_fraction = your stated confidence clamped to [0.50, 0.75] and net_edge subtracts the Kalshi fee; capped at 25% of total capital. Trade: your `--cost` dollars-at-risk, 5%-of-capital cap.
 
-Switch by editing the `default:` value with `sed`:
-```bash
-sed -i 's/  default: deepseek-chat/  default: deepseek-reasoner/' /c/Users/gsche/.hermes/config.yaml
-```
+## Kalshi Auth â€” Inline Python Pattern
 
-## Cron Job Operations
-
-### Cron with Model Override
-
-Cron jobs can use a cheaper model than the active session. Pass `model={provider, model}` on creation:
+When `kalshi_auth.py` can't be called externally (subprocess path issues, stale timestamps between auth and curl), replicate the RSA-PSS signing inline in a Python heredoc. **Use `C:/` paths, not `/c/` paths** â€” Python cannot read `/c/Users/...` on this host.
 
 ```python
-cronjob(action='create',
-    name='par-position-watch',
-    schedule='0 8-22 * * *',
-    script='position_watch.sh',            # runs before prompt, output injected as context
-    prompt='Evaluate the data and alert if notable...',
-    model={'provider': 'deepseek', 'model': 'deepseek-chat'},
-    deliver='telegram:World Cup (group)')
+import base64, subprocess, time, json, urllib.request
+
+def get_auth_headers(method, path):
+    ts = str(int(time.time() * 1000))
+    message = f"{ts}{method}{path}".encode()
+    key_file = "C:/Users/gsche/.hermes/kalshi/kalshi_key.pem"
+    proc = subprocess.run(
+        ['openssl', 'dgst', '-sha256',
+         '-sigopt', 'rsa_padding_mode:pss',
+         '-sigopt', 'rsa_pss_saltlen:-1',
+         '-sign', key_file],
+        input=message, capture_output=True
+    )
+    signature = base64.b64encode(proc.stdout).decode()
+    return {
+        "KALSHI-ACCESS-KEY": "${KALSHI_API_KEY}",
+        "KALSHI-ACCESS-TIMESTAMP": ts,
+        "KALSHI-ACCESS-SIGNATURE": signature
+    }
+
+# Usage: generate headers and make request in same process
+headers = get_auth_headers("GET", "/trade-api/v2/portfolio/balance")
+req = urllib.request.Request("https://api.elections.kalshi.com/trade-api/v2/portfolio/balance")
+for k, v in headers.items():
+    req.add_header(k, v)
+resp = urllib.request.urlopen(req, timeout=10)
+data = json.loads(resp.read())
+print(data)  # e.g. {"balance": 2607, "balance_dollars": "26.0796", ...}
 ```
 
-**Pattern:** Use deepseek-chat (Fast) for routine data-collection cron jobs. Save deepseek-reasoner (Pro) for active betting decisions.
+**Key points:** (1) timestamp and signature are generated in the same process as the HTTP call â€” no stale timestamps. (2) API key ID `c8f300e4-...` is hardcoded. (3) `balance_dollars` is a string, not a float. (4) `balance` is in cents (2607 = $26.07).
 
-### Script Data Pipeline
+## Kalshi Auth â€” POST Order Wire Format (REFERENCE ONLY â€” never call directly)
 
-Cron scripts must live in `~/.hermes/scripts/` (bare filename, no path). The script runs each tick and its stdout is injected into the agent's prompt as context. The agent then decides whether to alert or stay silent.
-
-**Design principle:** Scripts should output structured key=value data. The agent prompt should define clear thresholds for alerting. If nothing notable, the agent says nothing — zero group chat noise.
-
-### ⚠️ Critical: Cron Job Path Resolution on Windows
-
-Cron jobs on this host **must** set two fields in the jobs.json entry for the script to execute correctly. The default bare-name resolution (`script=position_watch.sh`) produces a mangled Windows path (`C:Usersgsche.hermesscriptsposition_watch.sh`) because the cron runner concatenates the script name to a broken CWD.
-
-**Required fix for every script-based cron job:**
-
-1. **`workdir` must be set to `"/tmp"`** — prevents the cron runner from using the broken default CWD
-2. **`script` must be an absolute MSYS path** — e.g. `"/c/Users/gsche/.hermes/scripts/position_watch.sh"`
-
-Correct Python configuration when creating a cron job via the tool:
-```python
-cronjob(action='create',
-    name='my-position-watch',
-    schedule='0 8-22 * * *',
-    script='/c/Users/gsche/.hermes/scripts/my_script.sh',  # absolute MSYS path
-    workdir='/tmp',  # always required
-    prompt='Evaluate...',
-    deliver='...')
-```
-
-To fix an existing cron job in `cron/jobs.json`:
-```python
-for j in data['jobs']:
-    if j['name'] == 'my-cron-job':
-        j['workdir'] = '/tmp'
-        j['script'] = '/c/Users/gsche/.hermes/scripts/my_script.sh'
-```
-
-Both `par-position-watch` and `futures-weekly-watch` already have this fix applied (as of Jun 5, 2026). Any new script-based cron job must include both fields.
-
-### Script stdout: structured data only
-
-Output structured key=value data from scripts. The agent prompt defines clear thresholds for alerting. If nothing notable, the agent says nothing — zero group chat noise.
-
-### Reliable Script Writing (Base64 Technique)
-
-Writing bash scripts to `~/.hermes/scripts/` on this Windows/git-bash setup is fragile because heredocs containing Python string literals (single quotes, backticks, f-strings) get mangled by shell interpretation. The most reliable workaround:
-
-1. **In `execute_code`**, base64-encode the script content:
-```python
-import base64
-script_content = """#!/bin/bash
-curl -s "https://api.elections.kalshi.com/trade-api/v2/markets/{TICKER}"
-...
-"""
-b64 = base64.b64encode(script_content.encode()).decode()
-print(b64)  # copy the base64 string
-```
-
-2. **In `terminal()`** with workdir="/tmp", base64-decode to file:
-```bash
-echo '<base64>' | base64 -d > /c/Users/gsche/.hermes/scripts/myscript.sh
-chmod +x /c/Users/gsche/.hermes/scripts/myscript.sh
-```
-
-This avoids all heredoc escaping issues because the content is pure base64 — no quotes, backticks, or special characters to escape.
-
-**Pitfall: Python `r"""..."""` raw strings corrupt f-strings with double quotes.** If the script contains `python3 -c '...'` where the Python code uses f-strings with double quotes (e.g. `f"{m.get("title")}"`), the raw string `r"""..."""` preserves the `\"` escape sequences literally as backslash-double-quote in the base64 output. The decoded script then has literal `\"` in the Python code, which causes syntax errors at runtime. **Fix:** Do NOT use `r"""..."""` for the outer Python string in execute_code. Use `"""..."""` (without `r`) and test that the escaped sequences resolve correctly, OR structure the embedded Python code to avoid needing `\"` entirely: use single-quoted Python strings (`python3 -c '...'`) so double quotes inside don't need escaping at all.
-
-### Existing Cron Jobs
-
-| Name | Schedule | Model | Script | Purpose |
-|---|---|---|---|---|---|
-| `wc-market-rediscovery` | 8am/8pm daily | default (Pro) | None (prompt-only) | Scans all 55 series for new events, alerts if new knockout markets appear |
-| `par-position-watch` | Every hour 8am-10pm | deepseek-chat (Fast) | `position_watch.sh` (abs MSYS path) | Monitors all 3 open positions price/volume, silent unless >3¢ move |
-| `futures-weekly-watch` | Sundays 1am UTC | deepseek-chat (Fast) | `futures_watch.sh` (abs MSYS path) | Weekly snapshot of futures/props/awards. Silent unless >3¢ move. |
-
-### Futures / Props / Awards Monitoring
-
-These markets (tournament winner, golden boot, awards, group qualifiers) are less liquid than match lines but offer bigger edges mid-tournament when narrative overreaction hits. The `futures-weekly-watch` cron runs `futures_watch.sh` each Sunday and evaluates price changes against the baseline snapshot. Design:
-
-- **Script:** `scripts/futures_watch.sh` — fetches live prices on all four series, outputs structured data
-- **Agent prompt:** Compares current prices against stored baseline, flags any >3¢ move
-- **Delivery pattern:** Silent if nothing notable — the group only hears about actionable changes
-- **Entry timing:** Best entries come DURING the tournament, not before. A strong team loses one group game → their winner price crashes 40% → the path to the final is still open → edge emerges.
-
-KXWCGAME events appear automatically as matchups lock. Discover them:
-
-```
-GET https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true&limit=200
-```
-
-Returns: event_ticker, title, markets[] (each with ticker, prices, volume, status). Paginate with cursor; stop on empty.
-
-Use the market ticker with:
-- Direct HTTP GET for price (public, no auth)
-- `GET /markets/{ticker}/orderbook` for depth
-- RSA-signed `POST /orders` for trading
-
-## Pre-Match Edge Scan Pipeline (Repeatable Workflow)
-
-This is the exact pipeline used for scanning the opening-day slate. It works before any matches start and relies only on public Kalshi endpoints + the fair-value model.
-
-### Step-by-step
-
-0. **Three cross-checks (against Elo blind spots)** — After step 4 (run fair value) and BEFORE looking at price, run these:
-  A. **Recent form** — Last 10 match results (W/D/L) for both teams via ESPN team page or Wikipedia. 2+ losses/draws in last 5 → discount FV. 5+ match unbeaten run → small bump.
-  B. **Squad value delta** — Check Transfermarkt squad total value. If Elo rank vs squad-value rank is wildly mismatched (e.g., top-10 Elo but outside top-30 squad value), discount FV by 1-2¢. Elo lags behind squad composition changes.
-  C. **Head-to-head** — Check H2H record (Wikipedia/ESPN). A 4+ match winless streak against the specific opponent is a discount signal regardless of Elo gap.
-  
-  Collect into a 2-3 line note that either confirms or adjusts the fair-value anchor. A clear contradiction (e.g. +20% Elo edge but 0 H2H wins in 10 years → pass).
-
-1. **List upcoming matches** — Use the Kalshi KXWCGAME events API:
-   ```
-   curl -s "https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true&limit=200"
-   ```
-   Parse the JSON to find events with `sub_title` containing match info. Key fields per event: `event_ticker`, `sub_title` (e.g. "USA vs PAR (Jun 12)"), and nested `markets[]` for each outcome.
-
-2. **Extract Elo ratings** — Navigate to https://eloratings.net/, then:
-   ```
-   browser_console(expression="document.body.innerText.substring(0, 15000)")
-   ```
-   The output is a flat text table. Parse by scanning for team names — format is `Rank\nTeam\nRating` on consecutive lines. All 48 WC teams are within the top 80 rows.
-
-3. **Run fair value model** — Call `kairos_fair_value(elo_home=N, elo_away=N)` for each match. Record `home_win`, `draw`, `away_win` probabilities.
-
-4. **Get live Kalshi prices** — For each match market ticker (extracted from step 1), fetch current prices:
-   ```
-   curl -s "https://api.elections.kalshi.com/trade-api/v2/markets/{TICKER}"
-   ```
-   Extract `yes_ask_dollars` and `yes_bid_dollars`. Public endpoint, no auth needed.
-
-5. **Compute edge** — Use `execute_code` to compare fair value vs. ask price across all matches. This is the right tool because you loop over multiple matches and compute arithmetic. Edge formula:
-   ```
-   edge = estimated_probability - yes_ask_dollars
-   ```
-   Positive edge = market is undervaluing the outcome. Negative edge = overpriced.
-
-6. **Rank by edge** — Sort findings by edge descending. Flag anything over +5% as a potential structural misprice (often caused by sentiment/home-team bias).
-
-### Price check oneliner pattern
-
-To extract specific fields from a Kalshi market response in one command:
-
-```bash
-curl -s "https://api.elections.kalshi.com/trade-api/v2/markets/{TICKER}" | \
-  python3 -c "import sys,json; d=json.load(sys.stdin)['market']; \
-  print(f\"{d['yes_ask_dollars']}, {d['yes_bid_dollars']}, {d['last_price_dollars']}\")"
-```
-
-### Common edge patterns found via this pipeline
-
-| Pattern | Description | Example from scan |
-|---------|-------------|-------------------|
-| **Sentiment misprice** | Host nation or brand-name team priced above Elo-based fair value. The gap can exceed 20¢ — the strongest signal type for early tournament. | USA (1733 Elo) at **50¢** vs Paraguay (1832 Elo) at **24¢**. FV gives Paraguay 45.6% → edge of **+21.6¢**. USA overpriced by 23¢. Caused by casual bettors betting the home team. |
-| **Narrow-favorite squeeze** | A strong favorite (Elo gap > 300) priced at 70¢ with FV of 71¢ — small edge but high confidence due to Elo disparity. | Mexico (1875) vs South Africa (1518): FV=71.0%, ask=70¢, edge=+1.0%. High confidence but low margin. Best for volume betting. |
-| **Coin-flip mispricing** | Near-equal Elo teams where the market leans one side but the model sees ~34% for both sides. Small edges (1-2¢) but lower variance. | Korea Rep (1758) vs Czechia (1740): KOR FV=37.6% ask=37¢, CZE FV=34.2% ask=33¢. Thin but directional. |
-
-### Pitfalls
-
-- **Kalshi prices are stale between trades** — the `last_price_dollars` may be hours old. Always use `yes_ask_dollars` (the price you'd actually pay) for edge computation.
-- **Liquidity check is critical** — a +20¢ edge means nothing if the `yes_ask_size_fp` is a few dollars. Filter out markets with negligible size.
-- **Elo is not the whole story** — the model gives a defensible baseline but doesn't know about lineups, rest days, motivation, or weather. Adjust fair value down when the edge relies on a narrow <3¢ gap.
-- **Large Kalshi API responses exceed terminal stdout limits** — Series with hundreds of markets (e.g., KXWCPLAYERGOALS at 2.4MB, KXWCTEAMLEADGOAL at 3MB) produce JSON that gets truncated by Hermes' 50KB terminal stdout cap, breaking piped `python3 -c "json.loads()"`. **Workaround:** use Python `urllib` inside a single terminal() heredoc — data stays in Python memory, no stdout truncation:
-  ```bash
-  python3 << 'PYEOF'
-  import urllib.request, json
-  url = "https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCPLAYERGOALS&with_nested_markets=true&limit=200"
-  d = json.loads(urllib.request.urlopen(urllib.request.Request(url)).read())
-  print(f"{len(d['events'])} events, {sum(len(e.get('markets',[])) for e in d['events'])} mkts")
-  PYEOF
-  ```
-  Prefer the urllib heredoc over `curl -o` then a separate `python3` call — keeping fetch and parse in one terminal() call keeps the large response in Python memory and off the ~50KB stdout cap.
-
-### See also
-
-- `references/contest-strategy.md` — free-to-enter contest optimization vs betting
-- `references/fair-value-model.md` — model details and tournament-level variants
-- `references/kalshi-soccer-rules.md` — Kalshi settlement rules (90min+stoppage, no ET/pens)
-- `references/pre-tournament-scanning.md` — what to scan when no matches are active
-- `references/opening-day-edge-scan-2026-06-05.md` — concrete edge findings from the June 5 pre-match scan (opening-day prices, Elo data, and the Paraguay/USA +21.6% edge finding)
-- `references/cross-checks-data-sources.md` — practical data-gathering playbooks for the three Elo blind-spot checks (recent form via Wikipedia API, squad values via x_search, H2H); includes known squad values, pitfalls, and adjustment rules
-- `scripts/position_watch.sh` — multi-position watch script for cron (see Cron Job Operations)
-- `scripts/kalshi_auth.py` — Python auth helper for RSA-PSS signing
-- `scripts/futures_watch.sh` — weekly snapshot of tournament winner (KXMENWORLDCUP), golden boot (KXWCGOALLEADER), awards (KXWCAWARD), and group qualifiers (KXWCGROUPQUAL) prices. Designed for cron with silent-when-nothing pattern.
-
-## Kalshi Order Placement (Verified)
-
-> ⚠️ **DO NOT place orders by hand.** Bet placement is CODE-ENFORCED: call the
-> `kairos_evaluate_bet` tool, which sizes the bet (half-Kelly), enforces every
-> hard rail (sources, milestone floors, event/velocity kill-rails, position
-> guard, net-of-cost, absolute ceiling) **and** submits the Kalshi order itself.
-> Provide the intent (`token_id` = the market ticker, `side`, `price`,
-> `estimated_probability`, `confidence`, `reasoning`, `sources`) and let the tool
-> place it. The `POST` details below are REFERENCE ONLY — what the tool does
-> internally. Hand-POSTing an order bypasses your safety rails and is forbidden
-> (SOUL.md step 9).
-
-### Endpoint
-
-```
-POST /portfolio/events/orders
-```
-
-NOT `/orders` (returns 404). Base URL: `https://api.elections.kalshi.com/trade-api/v2`
-
-### Required Fields
-
-| Field | Value | Notes |
-|---|---|---|
-| `ticker` | e.g. `KXWCGAME-26JUN12USAPAR-PAR` | Full market ticker from GET /markets |
-| `side` | `"bid"` (buy YES) or `"ask"` (buy NO) | NOT `"yes"/"no"` like Polymarket |
-| `count` | `"43"` (string!) | String-encoded integer, not a number |
-| `price` | `"0.2400"` (string, 4 decimals) | String, 4 decimal places |
-| `time_in_force` | `"good_till_canceled"` | Required |
-| `self_trade_prevention_type` | `"taker_at_cross"` | Required |
-| `client_order_id` | UUID v4 string | Optional but recommended for idempotent retries |
-
-### Auth Headers
+âš ï¸ **Order placement goes through `scripts/place_bet.py`, never a hand-rolled POST.** The script implements this wire format with the rails and journaling on top. The pattern below is kept ONLY as documentation of the wire format (for debugging the script, not for placing orders): `count` and `price` MUST be strings, not numbers â€” the Kalshi Go backend rejects numeric JSON types with `"cannot unmarshal number into Go struct field CreateOrderV2Request.count of type string"`.
 
 ```python
-headers = {
-    'KALSHI-ACCESS-KEY': '${KALSHI_API_KEY}',
-    'KALSHI-ACCESS-TIMESTAMP': ts,        # milliseconds, string
-    'KALSHI-ACCESS-SIGNATURE': sig,       # RSA-PSS-SHA256 over {ts}{METHOD}{path}
-    'Content-Type': 'application/json'
-}
+import base64, subprocess, time, json, urllib.request
+
+def get_auth_headers(method, path):
+    ts = str(int(time.time() * 1000))
+    message = f"{ts}{method}{path}".encode()
+    key_file = "C:/Users/gsche/.hermes/kalshi/kalshi_key.pem"
+    proc = subprocess.run(
+        ['openssl', 'dgst', '-sha256',
+         '-sigopt', 'rsa_padding_mode:pss',
+         '-sigopt', 'rsa_pss_saltlen:-1',
+         '-sign', key_file],
+        input=message, capture_output=True
+    )
+    signature = base64.b64encode(proc.stdout).decode()
+    return {
+        "KALSHI-ACCESS-KEY": "${KALSHI_API_KEY}",
+        "KALSHI-ACCESS-TIMESTAMP": ts,
+        "KALSHI-ACCESS-SIGNATURE": signature
+    }
+
+# Buy 250 shares of a YES contract at 0.4Â¢ limit
+body = json.dumps({
+    "ticker": "KXMENWORLDCUP-26-CIV",
+    "count": "250",           # string, not int
+    "side": "bid",            # "bid" = buy YES (open), "ask" = sell (close)
+    "type": "limit",
+    "price": "0.0040",        # string, not float â€” 0.4Â¢ = $0.004
+    "time_in_force": "good_till_canceled",
+    "self_trade_prevention_type": "taker_at_cross",
+    "client_order_id": "kairos-civ-futures-1"
+}).encode()
+
+path = "/trade-api/v2/portfolio/events/orders"
+headers = get_auth_headers("POST", path)
+req = urllib.request.Request(
+    "https://api.elections.kalshi.com" + path,
+    data=body,
+    headers={**headers, "Content-Type": "application/json"}
+)
+resp = urllib.request.urlopen(req, timeout=10)
+result = json.loads(resp.read())
+# result = {"order_id": "...", "fill_count": "250.00", "average_fill_price": "0.0040", ...}
+print(json.dumps(result, indent=2))
 ```
 
-### Order Response (Success)
+**Key pitfalls for orders:**
+- `count` and `price` are **strings** (Kalshi Go backend constraint). Using `int`/`float` returns HTTP 400.
+- `side`: `"bid"` = buy YES (open), `"ask"` = sell (close/exit). This is the opposite of Polymarket's convention.
+- `client_order_id` is required for idempotency â€” use a unique string per bet.
+- Check `liquidity_dollars` on the market before placing a large limit order â€” thin books mean your order may sit unfilled or walk the book if market-sold.
 
-```json
-{
-  "average_fee_paid": "0.0127",
-  "average_fill_price": "0.2400",
-  "client_order_id": "bee9f6f2-c047-4820-b8d6-d19aa5636ca8",
-  "fill_count": "43.00",
-  "order_id": "85a5b21b-760c-4260-8cdf-7147a8dfdbde",
-  "remaining_count": "0.00",
-  "ts_ms": 1780688162337
-}
-```
-`remaining_count: "0.00"` means fully filled. Partial fills are possible if liquidity is low.
+## Fair-Value Model
 
-### Price Improvement Pattern
+**Match FV â€” primary path: use `references/elo-to-fv-manual.md`.** The `kairos_fair_value` tool is a Polymarket plugin dependency and is **dead on this Kalshi host** â€” do not call it. Instead, compute Poisson win/draw/loss probabilities from Elo ratings manually using the calibrated model in the reference. It includes benchmark calibration points from the Jun 5 scan so you can verify your output against trusted numbers.
 
-Orders submitted at the `yes_ask` price may fill BELOW the ask if there are resting bids at better prices. Observed fills:
+**Tournament futures FV: use `references/tournament-futures-fv.md`.** The Poisson model only prices individual matches. For tournament winner / reach-round / stage-of-elimination markets, use the relative-Elo-share method in that reference. It anchors fair value among the top-contender pool, applies a conservative haircut for tournament variance, and cross-checks against sportsbook consensus when available. Only bet when the edge is clear on this coarser estimate.
 
-| Bet | Ask Price | Fill Price | Improvement |
-|---|---|---|---|
-| PAR 43 ct | 0.2400 | 0.2400 | None (at ask) |
-| ECU 21 ct | 0.4200 | 0.4100 | -1¢ saved |
-| PAN 15 ct | 0.2700 | 0.2600 | -1¢ saved |
+**Group qualification FV (KXWCGROUPQUAL): see `references/48-team-qualification-fv.md`.** The expanded 48-team format with a 3rd-place safety net (8 of 12 group 3rd-place teams advance, ~67% overall) changes the math for KXWCGROUPQUAL markets. Mid-tier teams in competitive groups have higher qualification probability than raw Elo gaps suggest because 4+ points almost guarantees advancement via either top-2 or best-3rd-place path.
 
-**Recommendation:** Submit limit orders at the ask or slightly below. If there's depth in the orderbook, the fill may come back cheaper.
+## Cross-Checks (against Elo blind spots)
 
-## Bankroll Deployment & Sizing
+**Data gathering â€” tiered fallbacks:** Not all tools are available on every host. Try in this order:
 
-> The post-trade workflow — monitoring open positions, reconciliation, realized P&L, **CLV**, and cash-out criteria — now lives in the **kairos-settlement** skill. Load that skill for settle / reconcile / performance / cash-out tasks.
+| Tier | Tool | Source | Works from |
+|------|------|--------|------------|
+| 1 | `x_search` | X posts via xAI/Grok | Parent + delegate_task subagents |
+| 2 | `browser_navigate` + `browser_console` | Wikipedia team results pages, Transfermarkt | Parent only (subagent browser snapshots often truncated) |
+| 3 | `web_search` / `web_extract` | General web (Firecrawl) | Unreliable â€” requires FIRECRAWL_API_KEY, frequently unconfigured |
 
-### Deployment Strategy
+**Reliable browser Wikipedia pattern** (use when x_search is also unavailable):
+- Navigate to `https://en.wikipedia.org/wiki/{Team}_national_football_team_results_(2020â€“present)` â€” the "(2020â€“present)" suffix page has year-by-year results tables.
+- Use `browser_console` with: `document.body.innerText.substring(document.body.innerText.indexOf('2025[edit]'), document.body.innerText.indexOf('2025[edit]')+2500)` to extract the 2025+2026 results in one call.
+- Team name format: `South_Korea`, `Czech_Republic` (not Czechia), `South_Africa` uses "soccer" not "football" in URL. Mexico = `Mexico`.
+- Each result line shows: date, competition, opponent, score. Extract W/D/L from score orientation (team listed first = home team in the layout).
 
-With a small bankroll (~$50), position sizing follows this priority:
-1. **Biggest edge first** — deploy to the largest +edge% regardless of match date
-2. **Diversify across match days** — don't put everything on one day's matches
-3. **Leave powder dry** — keep ~40-50% of bankroll for new opportunities that emerge closer to kickoff
+A. Recent form â€” last 5-10 matches W/D/L. Query x_search with pattern: `"{Team} national team last 5 results 2026"`. Look for: winless streaks (discount), 5+ match winning streaks (bump), heavy losses to similar-tier opponents (red flag).
+B. Squad value delta â€” Elo vs Transfermarkt squad value mismatch. Tiered fallback:
+   1. **Preferred**: `browser_navigate` to Transfermarkt team page, extract squad total value directly. Cleanest data.
+   2. **Fallback**: `x_search` `"{Team} squad total value transfermarkt 2026"`. X-sourced squad data is third-hand (journalists quoting numbers, screenshots) â€” lower confidence. Vet through `kairos_vet_signal` and flag as **X-sourced** in your reasoning. Still usable for the 1-2Â¢ discount signal, but if squad value is one of only two signals and both are X-sourced, consider passing unless the edge is large.
+   3. If both web and X are down: skip squad-value cross-check entirely rather than guessing. A two-signal bet (Elo + form + H2H, no squad value) is better than a three-signal bet with a fabricated number.
+C. Head-to-head â€” query x_search `"{Team1} vs {Team2} head to head history football"`. 4+ match winless streak = discount signal regardless of Elo gap. Single historical match (especially >10 years old) is a WEAK signal â€” do not over-adjust.
+D. **Climate/Heat** â€” cold-climate team playing hot-climate opponent in an open-air hot venue. See `references/wc2026-venue-heat.md` (stadium data) and `references/heat-analysis-workflow.md` (step-by-step). Core signal: Scandinavian/British/northern European teams in Miami/Monterrey/Guadalajara afternoon kicks against African/Middle Eastern/Latin American opponents. When this signal fires, adjust fair value up to 5-7 cents against the cold team. The 2025 Club World Cup previewed the same problem â€” players reported dizziness, "impossible" conditions.
 
-### Sizing in Practice (Jun 5 Deployment)
+E. **Pre-match X intel gathering** â€” see `references/prematch-x-intel-pattern.md` for the delegate_task + x_search fan-out pattern. Use this for parallel research across multiple matches when web_search is down.
 
-| Position | Edge | Bankroll % | $ Amount | Rationale |
-|---|---|---|---|---|
-| PAR (Jun 12) | +32% | 21% | $10.32 | Largest edge on opening slate, high vol |
-| ECU (Jun 14) | +27% | 17% | $8.61 | Strong edge, decent vol, different match day |
-| PAN (Jun 17) | +41% | 8% | $3.90 | Massive edge but thin market, conservative sizing |
-| **Total** | | **45%** | **$22.83** | Leaves $27 for future plays |
+F. **Host-nation home advantage** â€” the benchmark FV table in `references/elo-to-fv-manual.md` uses +35 Elo home advantage throughout (neutral venue). When a host nation (USA, Canada, Mexico) plays at their true home stadium, the Elo advantage is **+100**, not +35. Add +65 Elo to the host before computing FV. This shifts win probability ~4-7pp toward the host. The market usually prices this partially but not fully â€” always recompute FV with the correct +100 home advantage, then compare to the market price. Example (Jun 11): USA-PAR benchmark had PAR 45.6% at +35 neutral; at +100 true home, PAR FV shifted to ~37%. Market priced PAR at 23Â¢ â€” the 14Â¢ edge survived the adjustment.
 
-Half-Kelly formula used: `bet% = 0.5 * (edge / (1 - price))`, capped at 25% of bankroll for high-confidence plays, lower for thin liquidity.
+## Communication
 
-## Interacting with Kalshi via curl (Public Endpoints)
+**All cron outputs go to the World Cup group** (`telegram:World Cup (group)`, chat_id `-5198555204`), not the operator's DM. Both Grant (operator) and Garrett (co-financier) see everything. Garrett has equal standing â€” respond to him directly with the same autonomous style, no deferring to Grant.
 
-All Kalshi market data endpoints are public (no auth needed):
+When the operator asks you to respond to a group message: the session architecture means you cannot see group messages that don't trigger a session. If a group message went unanswered, the operator will forward it to your DM â€” respond immediately in the group (not the DM) via `send_message(target='telegram:World Cup (group)')`.
 
-| Endpoint | Purpose | Example |
-|----------|---------|---------|
-| `GET /events?series_ticker=KXWCGAME&with_nested_markets=true&limit=200` | Find all game markets | Discover matches and their tickers |
-| `GET /events?series_ticker=KXMENWORLDCUP&with_nested_markets=true` | Tournament winner market | Get prices on all 48 national teams |
-| `GET /markets/{ticker}` | Single market detail + current price | Get specific yes/no ask/bid |
-| `GET /markets/{ticker}/orderbook` | Liquidity depth | Check if size is real |
+- Markdown: bullet lists (no tables)
+- Concise reporting, flag only actionable moves
+- **bold** position names in position summaries
+## Pitfalls
 
-Base URL: `https://api.elections.kalshi.com/trade-api/v2`
+- **Cron delivery defaults to DM â€” verify target.** New cron jobs default `deliver='telegram'` (the home DM channel), not the group. When creating or updating cron jobs, explicitly set `deliver='telegram:World Cup (group)'`. Use `cronjob(action='list')` to audit delivery targets periodically â€” a job silently routing to DM means Garrett misses the output.
+- **Telegram `require_mention` must be false for group responsiveness.** By default, Hermes's Telegram integration only processes messages that mention the bot. To respond to all group messages, run: `/c/Users/gsche/dev/kairos/.venv/Scripts/hermes.exe config set telegram.require_mention false`. The bot may also need privacy mode disabled via @BotFather (`/setprivacy` â†’ Disable). The hermes gateway needs a restart to pick up config changes.
+- **Hermes CLI location on this host**: `/c/Users/gsche/dev/kairos/.venv/Scripts/hermes.exe`. It is NOT on PATH and NOT installed via npm globally. The `npx hermes` cache at `node_modules/hermes/bin/hermes` is unreliable (argument-parsing issues). Use the venv-installed binary directly.
 
-Auth is only needed for: `GET /portfolio/balance`, `POST /orders`, `GET /portfolio/settlements`.
-
-## Elo Ratings (eloratings.net) Extraction
-
-The site renders a custom table not using standard `<table>/<tr>/<td>`. Standard DOM queries fail.
-
-**Working method:**
-1. Navigate to https://eloratings.net/
-2. `browser_console` with expression: `document.body.innerText.substring(0, 12000)`
-3. Output is flat text — every team's rank, name, Elo rating. All WC teams are within top ~80 entries.
-4. **Never guess Elo numbers.** Always source from this page.
-
-## Group Chat / Multi-User Patterns
-
-Kairos does not auto-join Telegram group chats by default. To enable:
-- Hermes config change needed: enable group listening + whitelist the specific chat ID
-- Workaround: user relays signals from the group in DM, Kairos processes and responds back
-
-### Communication Routing (Autonomous Operation)
-
-Kairos operates **autonomously** — no permission needed for bets, cash-outs, or any position management. The group chat receives updates on actions taken, not requests for approval.
-
-- **DM with Grant (Telegram DM)** = logistics, setup, ops, infrastructure, account configuration
-- **"World Cup" Telegram group (Grant + Garrett)** = bet placement confirmations, position changes, cash-outs, performance summaries, edge findings that resulted in action. Only send what was DONE, not what is BEING CONSIDERED.
-- Betting research, edge discovery, and monitoring happen without pinging the group — the group only hears about executed actions.
-
-## Knowledge Management
-
-When the user says "save this to your files" or sends reference material:
-1. Save catalog data to SKILL.md, detailed docs to references/, compact facts to memory.
-2. Fix any duplicates or orphan text you create. Don't leave stale assumptions.
-3. Loaded skills should gain new sections for new knowledge — don't let learnings live only in memory.
-
-### Memory Unavailability Fallback
-
-If the `memory` tool returns `"not available"` or `"disabled in config"`, you cannot persist cross-session state. Act as follows:
-
-- **All decision data goes into your final output.** The current session transcript captures everything — include the full chain: what matches were scanned, what tools failed/succeeded, what edges were evaluated, and the pass/act decision with reasoning. Make the output self-contained enough to stand alone if memory never comes back.
-- **Note the gap explicitly.** State: `Memory unavailable — this session's findings will not persist automatically. See session transcript for full record.`
-- **For cron jobs without a user present:** the output IS the record. Include enough context that a human reading the delivery (Telegram message, group chat, email) understands the full picture — match window scanned, tools status, edge evaluations, final decision — without needing to refer to prior sessions.
-- **Do not skip or truncate the output because memory failed.** The response becomes the durable artifact. Write it as if it may be the only record.
-- **Do not retry memory in the same session.** One failure is final for the turn. Proceed with the fallback.
+- **Never report a price move from memory.** Always fetch the current price from Kalshi (`GET /markets/{ticker}`) before claiming a position has moved. Sessions expire and memory can be stale â€” a false move alert erodes operator trust. If the API returns an error, report the error, not an assumed move.\n- **Position summaries to the user require live fetches.** Any message that includes a current price for an active position must be preceded by a live `GET /markets/{ticker}` call in the same session. Do not carry prices forward from cron output or prior turns â€” the user sees your message and may act on it. If you can't fetch (API down, rate-limited), say so explicitly rather than quoting a possibly-stale price.\n- **Disambiguate when a team has multiple active markets.** Group-stage teams appear in 3+ Kalshi markets (one per group match). If you report "Ecuador at 81Â¢" while the user is looking at a different Ecuador market (CIVECU at 41Â¢), the numbers appear wrong and erode trust. Every position summary must include date + opponent + ticker â€” e.g. "Ecuador (vs CuraÃ§ao, Jun 20 â€” ECUCUW)". Never use team name alone as a price label.
+- **Kalshi `with_nested_markets=true` returns null/unreliable fields**: When fetching events with nested markets, `yes_bid`, `yes_ask`, `volume`, `last_price`, AND `liquidity_dollars` are all unreliable from the nested objects. Prices are `null`; `liquidity_dollars` often shows `"0.0000"` even when the orderbook API has substantial depth. The nesting gives tickers and subtitles only. For price data, discover markets via the events endpoint, then fetch prices individually via `GET /markets/{ticker}`. For liquidity, always use the orderbook API (`GET /markets/{ticker}/orderbook`) â€” it is the authoritative liquidity source, not the `liquidity_dollars` field from nested events. See `references/kalshi-api-pagination.md` for the full pagination pattern.
+- âš ï¸ **Empty orderbooks on pre-match markets â€” check the book, but small orders can still fill.** Kalshi markets may show `yes_ask`/`yes_bid` prices but return empty yes/no arrays from `GET /markets/{ticker}/orderbook`. **Before betting, always check the orderbook.** An empty-looking book means only indicative prices are visible â€” but **small limit orders at the displayed ask CAN fill immediately** (market maker provides hidden liquidity that doesn't appear as resting orders). Jun 11 session confirmed: two limit orders (10 shares at 23Â¢, 2 shares at 21Â¢) filled instantly despite empty orderbooks. For larger orders (>$5), an empty book is still a warning â€” hidden depth may not extend to larger sizes. Use small-lot limit orders and verify fills. The displayed prices ARE tradeable for small size even with an empty-looking book. The inverse also happens: `liquidity_dollars` may read `"0.0000"` from the events endpoint while the orderbook API shows real resting orders â€” trust the orderbook API, not the field.
+- `skill_view` may fail to load plugin-provided skills that appear in the listing â€” fall back to the cron prompt's embedded instructions
+- Windows host: terminal runs git-bash (POSIX), not PowerShell. MSYS paths work alongside C:\ paths. `write_file` to `/tmp/foo.py` lands at `C:\tmp\foo.py` â€” use the full Windows path in `terminal()` calls.
+- Cron jobs: `execute_code` may be blocked (`approvals.cron_mode` restriction) â€” use `terminal()` with inline python instead. For multi-step scripts, `write_file` the script first, then `terminal("python3 C:/tmp/script.py")`.
+- **Auth signature failure (`INCORRECT_API_KEY_SIGNATURE`)**: If the `kalshi_auth.py` script returns headers that Kalshi rejects with 401/INCORRECT_API_KEY_SIGNATURE, try: (1) verify `kalshi_key.pem` exists and is a valid RSA PRIVATE KEY, (2) re-run from the script's own directory (`cd /c/Users/gsche/.hermes/kalshi && python3 kalshi_auth.py ...`), (3) check if the API key (`KALSHI-ACCESS-KEY`) was rotated â€” the key ID is `${KALSHI_API_KEY}` as of Jun 5. The `kalshi_key.pem` at `/c/Users/gsche/.hermes/kalshi/` is the persistent key file (NOT `/tmp`). Do NOT capture this as a permanent "auth is broken" rule â€” it is a diagnostic checklist for transient signature issues.
+- **Python terminal() calls cannot read `/c/Users/...` paths**: Python's `open()`, `os.path.exists()`, and subprocess file arguments fail with `/c/Users/...` paths on this Windows git-bash host. Use `C:/Users/gsche/...` (forward-slashed Windows path) instead. Example: `key_file = "C:/Users/gsche/.hermes/kalshi/kalshi_key.pem"` NOT `/c/Users/gsche/.hermes/kalshi/kalshi_key.pem`. This applies to all Python code inside terminal() heredocs and subprocess calls.
+- **Order placement is script-only**: every buy/sell goes through `scripts/place_bet.py` â€” it owns the wire format (string `count`/`price`, `client_order_id`, limit type), the rails, and the journal. If an order needs to happen and the script can't do it, fix the script; do not hand-roll a POST.
+- **Never ask "Want me to place it?"** â€” operation mode is FULLY AUTONOMOUS. If the research is done and the edge is stateable, place the bet and report the confirmation. If the edge isn't there, state the pass and why. Permission-seeking is a rail violation identical to betting without sources.
+- **X data gathering when web tools are down**: `web_search` and `web_extract` require Firecrawl (may be unconfigured). `x_search` (xAI/Grok) works independently â€” both from the parent agent AND from `delegate_task` subagents. Subagents only fail on `web_search`/`web_extract`. Use `delegate_task` with `toolsets: [\"x_search\"]` to fan out parallel X research across multiple matches in one turn. For non-X data (Wikipedia, ESPN, Transfermarkt), use `browser_navigate` + `browser_console` as fallback from the parent â€” subagent browser snapshots are often truncated.
+- **Kalshi events endpoint uses `event_ticker`, not `ticker`.** When parsing `GET /events?...` responses, the event-level key is `event_ticker` (e.g. `\"event_ticker\": \"KXWCGROUPQUAL-26F\"`). Accessing `event['ticker']` raises `KeyError`. Markets within events DO use `ticker`. Affects all series-discovery code. Subagents with `toolsets: [\"web\"]` or `[\"browser\"]` cannot reliably fetch eloratings.net because web tools require Firecrawl and browser snapshots are truncated. Elo ratings are stable during tournament periods (no competitive matches between group-stage game days), so the benchmark table in `references/elo-to-fv-manual.md` is the primary fallback. Only re-fetch Elo from the parent's browser if several matchdays have passed or the benchmark table doesn't cover the teams. Never delegate Elo fetching â€” it will fail silently and return no data.

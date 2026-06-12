@@ -58,7 +58,7 @@ in each row instead.
 | Signals / lineup / injuries | — | `delegate_task` / `x_search` |
 | Live match state | `kairos_get_match_state` | ESPN scoreboard fetch (data-source based) |
 | Velocity (trajectory bets) | `kairos_check_velocity` | derive from successive `GET .../markets/{ticker}` snapshots |
-| Evaluate / size a bet | `kairos_evaluate_bet` | half-Kelly math in the kairos skill, then signed `POST /trade-api/v2/portfolio/events/orders` |
+| Evaluate / size a bet | `kairos_evaluate_bet` | `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/place_bet.py"` — sizes + enforces rails; NEVER raw POST /portfolio/events/orders |
 
 **Note:** The entire Kalshi path bypasses the Polymarket `kairos_*` tools. Only
 the data-source-based helpers (Elo fair-value, ESPN match state) might be reusable

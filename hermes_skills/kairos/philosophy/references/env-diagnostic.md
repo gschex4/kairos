@@ -18,7 +18,7 @@ Kalshi-native replacements:
 - find markets / list matches -> `GET https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXWCGAME&with_nested_markets=true` (public, no auth)
 - get prices -> `GET .../markets/{ticker}` (public)
 - bankroll -> `GET .../portfolio/balance` (RSA-signed via kalshi_auth.py)
-- evaluate/size a bet -> use the half-Kelly math in the skill, then place via signed `POST /portfolio/events/orders`
+- evaluate/size a bet -> place ONLY via `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/place_bet.py"` (it sizes and enforces the rails; never POST /portfolio/events/orders directly)
 - reconcile/settle -> `GET .../portfolio/positions` and `.../portfolio/settlements` (RSA-signed)
 
 ## Kalshi Credentials

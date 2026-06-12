@@ -1,124 +1,176 @@
 ---
 name: kairos-settlement
-title: Kairos — Settlement, Reconciliation & CLV
 description: >
-  Post-trade workflow for the Kairos betting agent: monitoring open positions,
-  reconciling Kalshi settlements, computing realized P&L and closing-line value
-  (CLV), reading the bet journal, and cash-out decisions. Load this for settle /
-  reconcile / performance / CLV / P&L / cash-out tasks (e.g. the daily-settle
-  cron) — bet discovery, sizing, and placement live in the kairos-philosophy skill.
-domain: betting, kalshi, settlement, clv, reconciliation
+  Post-trade workflow: reconcile Kalshi settlements, compute realized P&L and
+  closing-line value (CLV), monitor open positions, and decide cash-outs.
+  Load this for settle / reconcile / performance / CLV / P&L / cash-out tasks.
+  Bet discovery, sizing, and placement live in kairos-philosophy.
+category: kairos
 ---
 
 # Kairos — Settlement, Reconciliation & CLV
 
-This skill covers everything **after** a bet is placed. Bet discovery, fair
-value, sizing, and order placement live in **kairos-philosophy**. Settlement is
-**read-only analysis** — the only write action here is a deliberate cash-out,
-which still goes through `kairos_evaluate_bet` (rails enforced), never a raw order.
+Everything **after** a bet is placed. Settlement is **read-only analysis**;
+the only write action is a deliberate cash-out, which goes through
+`place_bet.py sell --ticker T --price P --count N --reasoning "..."`
+(kairos-philosophy `scripts/` — journals the exit), never a raw order.
 
-Host reminder: Windows native git-bash (MSYS2). Pass `workdir="/tmp"` to every
-`terminal()` call; the Windows C: drive is mounted at `/c/`.
+## Platform
 
-## Data sources (Kalshi, RSA-signed)
+- **Kalshi** (CFTC-regulated). Public API: `api.elections.kalshi.com/trade-api/v2/`.
+- All `kairos_*` plugin tools are **DEAD** on this host (legacy Polymarket bindings
+  that demand `POLYMARKET_PRIVATE_KEY`). Do **not** call `kairos_reconcile_positions`,
+  `kairos_performance`, `kairos_get_bankroll`, `kairos_get_market_price`, etc.
+- Instead, run the scripts in this skill's `scripts/` directory via `terminal()`.
 
-The `kairos_reconcile_positions` / `kairos_performance` plugin tools are
-**NON-FUNCTIONAL** on this host (legacy Polymarket; they demand
-POLYMARKET_PRIVATE_KEY). Do **not** call them. Reconcile via the Kalshi API
-directly, RSA-signed, using the signing recipe in the **kairos-philosophy**
-skill's `references/kalshi-api.md` (Reconciliation section). Base
-`https://api.elections.kalshi.com`:
+## Windows Host Execution
 
-| Endpoint | Purpose |
+- Shell: git-bash (POSIX), not PowerShell. Pass `workdir="/tmp"` to every `terminal()` call.
+- Write scripts to `/tmp/foo.py` (resolves to `C:\tmp\foo.py`) then run with `python3 "C:/tmp/foo.py"`.
+- The RSA signing helper lives at `C:\Users\gsche\.hermes\kalshi\kalshi_auth.py`.
+  Import it via `sys.path.insert(0, r"C:\Users\gsche\.hermes\kalshi")` — do NOT
+  try to put `kalshi_key.pem` next to the calling script.
+
+## Daily-Settle Sequence
+
+### Step 1 — Pull Data from Kalshi
+
+**⚠️ Do NOT write reconciliation or price-check scripts from scratch.** The
+scripts in this skill's `scripts/` directory are battle-tested and handle
+Windows paths, RSA signing, and the Kalshi response schema correctly.
+Inline scripts waste time and introduce path/auth bugs.
+
+Copy the script to `/tmp/` and run it:
+
+```bash
+cp "/c/Users/gsche/.hermes/skills/kairos-settlement/scripts/reconcile.py" /tmp/
+python3 /tmp/reconcile.py
+```
+
+It hits three endpoints with fresh RSA timestamps per call and dumps one JSON blob:
+
+| Endpoint | What |
 |---|---|
-| `GET /trade-api/v2/portfolio/balance` | Current cash balance |
-| `GET /trade-api/v2/portfolio/positions` | Open positions (resting + settled) |
-| `GET /trade-api/v2/portfolio/settlements` | Resolved markets + your win/loss result |
+| `GET /trade-api/v2/portfolio/balance` | Cash balance, portfolio value |
+| `GET /trade-api/v2/portfolio/positions` | Open positions (market-level + event-level) |
+| `GET /trade-api/v2/portfolio/settlements` | Resolved markets with outcome + revenue |
 
-Call all three in **one** script with a **fresh RSA timestamp per call** (the
-signed message is `{ts_ms}{METHOD}{path}`). Keeps you under the ~50KB Hermes
-stdout cap and avoids re-auth churn.
+### Step 2 — Price-Check Open Positions
 
-## The bet journal — canonical machine-readable history
+Filter to World Cup positions only (tickers starting with `KXWC`). Copy and
+pipe tickers via stdin:
 
-Every `kairos_evaluate_bet` outcome — **placed, dry_run, AND rejected** — is
-appended to `~/.hermes/logs/bet_journal.jsonl` by a `post_tool_call` hook. One
-JSON object per line:
+```bash
+cp "/c/Users/gsche/.hermes/skills/kairos-settlement/scripts/price_check.py" /tmp/
+echo -e "KXWCGAME-26JUN12USAPAR-PAR\nKXWCGAME-26JUN14CIVECU-ECU" | python3 /tmp/price_check.py
+```
+
+Or pipe from a temp file if there are many tickers. Do not write a new price
+script — the existing one handles auth correctly.
+
+### Step 3 — Reconcile vs Bet Journal
+
+The bet journal at `~/.hermes/logs/bet_journal.jsonl` is the canonical
+machine-readable history. Every `place_bet.py` outcome — placed, dry_run,
+AND rejected — is appended by the script itself. One JSON per line:
 
 ```json
-{"ts":"…Z","tool":"kairos_evaluate_bet","status":"placed|dry_run|rejected",
- "input":{"market_question":"…","token_id":"KXWCGAME-…","condition_id":"…",
- "side":"BUY","price":0.24,"estimated_probability":0.31,"confidence":0.7},
- "result":{…},"duration_ms":88}
+{"ts":"…Z","tool":"place_bet.py","status":"placed|dry_run|rejected",
+ "rail":"R2-edge (rejected only)","input":{"ticker":"KXWCGAME-…","prob":…,…},"result":{…}}
 ```
 
-This is the only place **rejected** bets are recorded (the markdown
-`log_bet_decision` only fires for placed/dry_run — the rails reject before it
-runs). Use it to:
-- match placed bets to their settlements by `token_id`,
-- compute realized P&L and CLV per bet,
-- audit rejections — which rail fired, how often — to refine confidence/sizing.
+Filter `status=='placed'` to match against settlements by `input.ticker`.
+Filter `status=='rejected'` to audit which rails fired (`rail` field).
 
-Read pattern (workdir=/tmp):
-```bash
-cat /c/Users/gsche/.hermes/logs/bet_journal.jsonl \
-  | python -c "import sys,json; [print(json.dumps(json.loads(l))) for l in sys.stdin if l.strip()]"
-```
-Filter `status=='placed'` for live positions; tally `status=='rejected'` reasons
-for the rejection audit.
+**NB**: positions placed before Jun 10, 2026 (pre-script era) appear on Kalshi
+but NOT in the journal — reconcile those by ticker match against the positions
+endpoint. Journal entries dated Jun 10 with `status: dry_run` and reasoning
+"test dry run"/"test" are script validation runs, not bets.
 
-## Realized P&L (per settled position)
+### Step 4 — Compute Realized P&L per Settlement
 
-A BUY stakes `S` dollars at entry price `p`, buying `S/p` contracts that each pay
-$1 on a win:
+For each settled position:
 
-- **win** → profit = `S * (1 - p) / p`
-- **loss** → `-S`
+- **BUY YES, won**: `profit = revenue_dollars − yes_total_cost_dollars`
+- **BUY YES, lost**: `loss = yes_total_cost_dollars` (revenue = 0)
+- If both YES and NO shares held (`yes_count_fp` > 0 AND `no_count_fp` > 0):
+  total cost = `yes_total_cost + no_total_cost`; winner side pays out at $1/share.
 
-SELL is approximated as buying the complement at `(1 - p)`. The agent is steered
-to BUY (express a negative view by buying the NO contract), so SELL P&L is an
-estimate, not exact. Report **realized P&L today** and **cumulative vs the $50
-starting bankroll**.
+Kalshi's `revenue` field is in **cents** (e.g., `500` = $5.00 payout on a win).
 
-## Closing-line value (CLV) — the skill metric
+Sum realized P&L (pre-fee and post-fee) across all settlements. Report
+**today's** realized P&L and **cumulative vs the $50 starting bankroll**.
 
-CLV measures whether you beat the market's closing price. Positive = good:
+### Step 5 — Compute CLV per Position
 
-- **BUY:**  `clv = closing_price − entry_price`  (you bought cheaper than the close)
-- **SELL:** `clv = entry_price − closing_price`  (you sold richer than the close)
+CLV = closing price − entry price for BUY positions. Positive = good.
 
-"Closing price" on Kalshi = the market's last YES price just before kickoff (or
-before resolution). Pull it from `GET /markets/{ticker}` (`last_price` /
-`previous_yes_ask`) as close to kickoff as you can, and record it against the
-journal entry's `entry_price`.
+"Closing price" = the market's `last_price_dollars` just before kickoff.
+If the match hasn't started yet, CLV is a running mark (current ask − entry).
 
-**CLV is the leading indicator of edge.** Track it even before settlements land:
-a bettor with consistently positive CLV is beating the market regardless of
-short-run win/loss variance. A run of negative CLV means the fair-value model is
-mispriced — flag it for review even if the bets happen to win.
+Track average CLV and positive-CLV rate. **CLV is the leading indicator of edge**
+— consistently positive CLV means the fair-value model beats the market even on
+small samples.
 
-## Monitoring open positions
+### Step 6 — What to Report
 
-`par-position-watch` cron runs hourly 8am–10pm: it fetches current prices on all
-open positions and alerts the **World Cup** group **only** when a position has
-moved **>3¢** from entry. Silent otherwise — no spam.
+Deliver to the World Cup group:
 
-## Cash-out criteria
+1. Settled WC markets since last run + win/loss + realized P&L (today and cumulative vs $50).
+2. Open WC positions: ticker, shares, entry price, current ask, Δ in cents, unrealized P&L.
+3. Rejection audit (only if notable — same rail fired repeatedly).
 
-- **Price reaches 80%+ of fair value** → consider taking profit (diminishing edge).
-- **Volume implodes** (open interest drops >50%) → liquidity risk, consider exiting.
-- **Lineup news contradicts the thesis** → cut immediately (e.g. a key starter ruled out).
-- **New, better edge emerges and bankroll is tight** → rotate out of the weakest position.
+**Silence rule**: End with `[SILENT]` when (a) nothing settled since last run,
+AND (b) no open position moved ≥15% relative from entry (`|current − entry| / entry * 100`).
+This filters Kalshi spread noise — flat 3¢ was too tight for Kalshi's thinner order books
+and was replaced Jun 5. Do not combine `[SILENT]` with content — either report findings
+normally, or say `[SILENT]` and nothing more.
 
-A cash-out is a real order — route it through `kairos_evaluate_bet` (sell side),
-never a hand-placed `POST /portfolio/events/orders`.
+## Cash-Out Criteria
 
-## What to report (daily-settle)
+Cash-out logic depends on which **kind** of position it is (see
+`trade-screen.md` for the distinction):
 
-Deliver to the **World Cup** group:
-1. Settled markets since last run + win/loss + realized P&L (today and cumulative vs $50).
-2. Open positions: current mark + unrealized P&L + CLV on recently-closed lines.
-3. The rejection audit only if notable (e.g. the same rail fired repeatedly).
+**Conviction / hold-to-resolution positions** (most match-win bets): match-day exit
+only — once the match kicks off, the position rides to resolution. Pre-match exit
+only on thesis invalidation (lineup news, injury to key player).
 
-End with `[SILENT]` when nothing settled and no open position moved >3¢ — do not
-spam. Report what **happened**, not what you are considering.
+**Trade / re-rate positions** (bought cheap to sell into a price rise — futures,
+props, awards, or any cheap contract held as a trade): the thesis is to **sell
+into the re-rate, not to hold for the outcome**. The exit ladder, catalyst-timed
+selling mechanic, stop-losses, and liquidity rules live in ONE place:
+`references/trade-exit-strategy.md` (kairos-philosophy skill) — read it before
+any trade exit; do not work from memory of it. Execute each tranche via
+`place_bet.py sell` after checking order-book depth (limit-sell thin books,
+trickle large exits).
+
+## Pitfalls
+
+- **Never write reconciliation/price-check scripts from scratch.** The
+  `scripts/` directory in this skill has working, battle-tested versions that
+  handle Windows paths, RSA signing, and Kalshi schemas correctly. Copy them to
+  `/tmp/` and run them. Inline scripts invite path bugs (`/c/Users/…` in Python
+  on Windows) and auth drift.
+- **The `kairos_*` tools are ALL dead on this host.** They're Polymarket
+  bindings. Use the `scripts/` in this skill instead.
+- **Never report a price move from memory.** Always fetch the current price
+  from Kalshi (`GET /markets/{ticker}`) before claiming a position has moved.
+  Sessions expire and memory can be stale — a false move alert erodes operator
+  trust. If you can't fetch the price (API error, rate limit, missing ticker),
+  say so explicitly rather than assuming a move occurred.
+- **Openssl + MSYS paths**: the `kalshi_auth.py` helper resolves the key file
+  relative to itself via `os.path.dirname(__file__)`. Import it from
+ 
+  `C:\Users\gsche\.hermes\kalshi` and let it find `kalshi_key.pem` in that
+  same directory. Do not copy the key — openssl chokes on MSYS `/c/…` paths.
+- **Bet journal may be empty**: positions placed before the logging hook was
+  installed won't appear. Fall back to `GET /portfolio/positions` for ticker
+  matching.
+- **Kalshi `updated_time` can be stale**: markets may show `updated_time` days
+  old while prices haven't changed — the `yes_ask_dollars` and
+  `last_price_dollars` are still live. Trust the price fields, not the timestamp.
+
+## Scripts
+
+- `scripts/reconcile.py` — pull balance + positions + settlements in one shot.
+- `scripts/price_check.py` — fetch current ask/bid/last for a list of tickers.
