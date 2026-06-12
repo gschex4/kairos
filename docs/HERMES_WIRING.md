@@ -5,6 +5,13 @@ a `hermes.toml` config interface that does not exist. Hermes uses YAML
 (`~/.hermes/config.yaml`), and the canonical entry point is the `hermes`
 CLI plus cron jobs — not an embedded Python loop.
 
+> **Heads up — Kalshi is the live exchange.** Kairos started on Polymarket and
+> migrated to Kalshi (CFTC-regulated). Parts of this guide still mention the old
+> Polymarket plugin path; where they conflict, Kalshi wins. Concretely: set
+> **Kalshi** credentials (Step 1), and market discovery + bet placement follow
+> the `kairos:philosophy` skill (the Kalshi events API + `scripts/place_bet.py`),
+> not the legacy `kairos_evaluate_bet` / `kairos_find_markets` plugin tools.
+
 ## Mental model
 
 Kairos is **not a standalone program**. It is three artifacts that plug
@@ -12,14 +19,12 @@ into Hermes:
 
 | Artifact | What it does | Lives at |
 |---|---|---|
-| `hermes_plugin/` | Wraps `src/polymarket_tool.py` + `src/sports_feed.py` as LLM-callable tools (`kairos_evaluate_bet`, `kairos_get_match_state`, etc.) | `~/dev/kairos/hermes_plugin/` symlinked into `~/.hermes/plugins/kairos/` |
+| `hermes_plugin/` | Wraps `src/kalshi_tool.py` + `src/sports_feed.py` as LLM-callable tools (`kairos_get_match_state`, `kairos_fair_value`, etc.) | `~/dev/kairos/hermes_plugin/` symlinked into `~/.hermes/plugins/kairos/` |
 | `hermes_skills/kairos/philosophy/SKILL.md` | The betting philosophy as a Hermes skill, loadable on demand | `~/dev/kairos/hermes_skills/` symlinked into `~/.hermes/skills/` |
 | `docs/SOUL.example.md` | Kairos identity, auto-loaded into every session | Copy to `~/.hermes/SOUL.md` |
 
 Plus two pieces from Hermes itself:
 
-- **Bundled `polymarket` skill** for read-only Gamma/CLOB/Data API queries
-  (replaces our deleted `gamma_client.py`)
 - **Built-in `cronjob` tool** for scheduling pre-match scans and in-play polls
 - **Built-in Telegram gateway** for alerts (replaces our deleted `notifications.py`)
 
@@ -77,8 +82,6 @@ use case to not matter.
    ```
 3. Set Kairos's other shared env vars in the same file:
    ```
-   POLYMARKET_PRIVATE_KEY=0x...
-   POLYMARKET_FUNDER_ADDRESS=0x...
    KAIROS_DRY_RUN=true
    KAIROS_STARTING_BANKROLL_USD=50
    # Isolate Kairos's gbrain brain from any other gbrain brain on the
@@ -86,6 +89,11 @@ use case to not matter.
    # completely separate from a default ~/.gbrain knowledge base.
    GBRAIN_HOME=~/.kairos
    ```
+   Kalshi credentials (the live exchange) go in the project `.env`
+   (`~/dev/kairos/.env`, copied from `.env.example`), not here: set
+   `KALSHI_API_KEY` to your Kalshi API key id and `KALSHI_KEY_PATH` to the path
+   of its RSA private key (`.pem`). Create the key in your Kalshi account
+   settings. (`POLYMARKET_*` is legacy and not required.)
    Also `export GBRAIN_HOME=~/.kairos` in your shell so manual `gbrain`
    commands (init, sync) target the Kairos brain, not the default one.
 4. Set the default model:
@@ -151,8 +159,8 @@ plugins:
 
 skills:
   enabled:
-    - polymarket          # bundled, covers Gamma + CLOB + Data API reads
     - kairos:philosophy
+    # - polymarket   # optional/legacy; not required — Kairos uses the Kalshi API directly
 
 mcp_servers:
   gbrain:
@@ -262,6 +270,13 @@ Two cron jobs cover all of Kairos's decision windows. Both follow the
 **delegation pattern** for X data: the main agent runs on DeepSeek (no
 direct `x_search` access) and delegates to a Grok child agent when it
 needs live X signals.
+
+> **Note:** the example prompts below predate the Kalshi migration and still
+> name `kairos_find_markets` / `kairos_evaluate_bet` — legacy Polymarket plugin
+> tools. Because each job loads `--skill kairos:philosophy`, the agent follows
+> the skill's current flow instead: discover markets via the Kalshi events API
+> and place bets via `scripts/place_bet.py`. Read the prompts as the decision
+> loop (scan → research on X → size → bet/pass), not literal tool names.
 
 ### Pre-match scan (every 4 hours, Flash default)
 
@@ -375,7 +390,7 @@ cd ~/dev/kairos
 python3 -m src.main --smoke-test
 ```
 
-Should print `12/12 sub-tests passed` and `=== Smoke test passed ===`.
+Should print `45/45 sub-tests passed` and `=== Smoke test passed ===`.
 This proves sizing + hard rails work in isolation, independent of Hermes.
 
 ## When something is off
@@ -400,9 +415,9 @@ This proves sizing + hard rails work in isolation, independent of Hermes.
   subprocesses. Make sure required vars (`PATH`, `HOME`, any DB credentials)
   are explicitly listed under `mcp_servers.gbrain.env:` in
   `~/.hermes/config.yaml`. Test with `hermes mcp test gbrain`.
-- **Polymarket tool errors on first real bet:** re-read
-  [PRIVATE_KEY_EXPORT.md](PRIVATE_KEY_EXPORT.md) and confirm the wallet
-  address in `.env` matches the wallet connected to Polymarket.
+- **Auth errors on first real bet (`INCORRECT_API_KEY_SIGNATURE` or a missing
+  `KALSHI_API_KEY`):** confirm `KALSHI_API_KEY` and `KALSHI_KEY_PATH` are set in
+  the project `.env` and the `.pem` at that path is your Kalshi RSA key.
 - **Anything unclear:** flip `KAIROS_DRY_RUN=true` and re-run the smoke
   test to confirm the offline stack is healthy. That isolates whether the
   problem is in Kairos's logic or in the Hermes wiring.

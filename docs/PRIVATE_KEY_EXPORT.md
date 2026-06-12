@@ -1,5 +1,11 @@
 # Exporting your Polymarket wallet's private key
 
+> **Legacy (Polymarket).** Kairos now trades on **Kalshi**, which authenticates
+> with an RSA API key (`KALSHI_API_KEY` + `KALSHI_KEY_PATH`), not a wallet
+> private key. New setups do **not** need this doc — see
+> [HERMES_WIRING.md](HERMES_WIRING.md) for Kalshi credential setup. This is kept
+> only for the retired Polymarket path.
+
 The bot signs every Polymarket order with the wallet's private key. So
 wherever the bot runs, the private key has to be in its `.env` file. This
 doc walks through getting it out of Polymarket's embedded wallet.
