@@ -47,7 +47,7 @@ When the bot isn't responding to group messages that don't mention it:
 
 ## Cron Delivery Targets
 The World Cup group chat target string is: `telegram:World Cup (group)`
-Chat ID: `-5198555204`
+Chat ID: `<group chat_id>`
 
 To audit all cron delivery targets:
 ```

@@ -38,5 +38,5 @@
 ## Notes
 - `memory()` tool is disabled in cron sandbox environments
 - KAIROS_DRY_RUN=false in .env (live mode)
-- Telegram channel: @Kairos_WorldCup_bot, chat_id <TELEGRAM_CHAT_ID>
+- Telegram channel: <bot handle>, chat_id <TELEGRAM_CHAT_ID>
 - gbrain lives at `C:\Users\gsche\.kairos\.gbrain` (GBRAIN_HOME env var)

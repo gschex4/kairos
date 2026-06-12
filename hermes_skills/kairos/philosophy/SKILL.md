@@ -306,7 +306,7 @@ F. **Host-nation home advantage** â€” the benchmark FV table in `references
 
 ## Communication
 
-**All cron outputs go to the World Cup group** (`telegram:World Cup (group)`, chat_id `-5198555204`), not the operator's DM. Both Grant (operator) and Garrett (co-financier) see everything. Garrett has equal standing â€” respond to him directly with the same autonomous style, no deferring to Grant.
+**All cron outputs go to the World Cup group** (`telegram:World Cup (group)`, chat_id `<group chat_id>`), not the operator's DM. Both Grant (operator) and the co-financier see everything. The co-financier has equal standing â€” respond to them directly with the same autonomous style, no deferring to Grant.
 
 When the operator asks you to respond to a group message: the session architecture means you cannot see group messages that don't trigger a session. If a group message went unanswered, the operator will forward it to your DM â€” respond immediately in the group (not the DM) via `send_message(target='telegram:World Cup (group)')`.
 
@@ -315,7 +315,7 @@ When the operator asks you to respond to a group message: the session architectu
 - **bold** position names in position summaries
 ## Pitfalls
 
-- **Cron delivery defaults to DM â€” verify target.** New cron jobs default `deliver='telegram'` (the home DM channel), not the group. When creating or updating cron jobs, explicitly set `deliver='telegram:World Cup (group)'`. Use `cronjob(action='list')` to audit delivery targets periodically â€” a job silently routing to DM means Garrett misses the output.
+- **Cron delivery defaults to DM â€” verify target.** New cron jobs default `deliver='telegram'` (the home DM channel), not the group. When creating or updating cron jobs, explicitly set `deliver='telegram:World Cup (group)'`. Use `cronjob(action='list')` to audit delivery targets periodically â€” a job silently routing to DM means the co-financier misses the output.
 - **Telegram `require_mention` must be false for group responsiveness.** By default, Hermes's Telegram integration only processes messages that mention the bot. To respond to all group messages, run: `/c/Users/gsche/dev/kairos/.venv/Scripts/hermes.exe config set telegram.require_mention false`. The bot may also need privacy mode disabled via @BotFather (`/setprivacy` â†’ Disable). The hermes gateway needs a restart to pick up config changes.
 - **Hermes CLI location on this host**: `/c/Users/gsche/dev/kairos/.venv/Scripts/hermes.exe`. It is NOT on PATH and NOT installed via npm globally. The `npx hermes` cache at `node_modules/hermes/bin/hermes` is unreliable (argument-parsing issues). Use the venv-installed binary directly.
 
