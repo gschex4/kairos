@@ -1,0 +1,7 @@
+name: web-perplexity
+version: 1.0.0
+description: "Perplexity Sonar web search (cited synthesis). Search-only. Requires PERPLEXITY_API_KEY. Built for Kairos contextual cross-checks (recent form, squad value, head-to-head, weather forecast) — the cheap, cited replacement for the disabled browser. X-primary signals (lineups/injuries) stay on Grok x_search."
+author: Kairos
+kind: backend
+provides_web_providers:
+  - perplexity
