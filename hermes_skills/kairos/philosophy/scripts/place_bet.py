@@ -8,9 +8,10 @@ rejected) to ~/.hermes/logs/bet_journal.jsonl, and places the RSA-signed
 order. The agent never picks share counts and never calls
 POST /portfolio/events/orders directly.
 
-BUY (conviction bet) — size computed by confidence-scaled Kelly, rails enforced:
+BUY (conviction bet) — size computed by confidence-scaled Kelly, rails enforced.
+  Conviction requires FV >= 0.40 (>= 0.45 for normal edge) — see R7. Example:
   python3 place_bet.py buy --ticker KXWCGAME-26JUN12USAPAR-PAR \
-      --price 0.24 --prob 0.31 --confidence 0.7 \
+      --price 0.46 --prob 0.55 --confidence 0.7 \
       --reasoning "one-sentence edge" --sources "url1,url2" [--dry-run]
 
 BUY (re-rate trade, e.g. cheap futures) — sized by dollars at risk:
@@ -25,8 +26,8 @@ SELL (exit / cash-out / trade-ladder tranche) — explicit count required:
 
 Rails enforced in code (buy):
   R1 sources required (non-empty)
-  R2 NET edge = prob - price - fee >= 0.03 (>= 0.05 when prob >= 0.70),
-     where fee = 0.07 * price * (1 - price) (Kalshi taker fee per contract)
+  R2 NET edge = prob - price - fee >= 0.03 (>= 0.05 when prob >= 0.70; >= 0.08 in
+     the 0.40-0.45 borderline band, see R7), fee = 0.07 * price * (1 - price)
   R3 conviction size = confidence-scaled Kelly of TOTAL capital (cash + WC
      exposure): fraction = confidence clamped to [0.50, 0.75], applied to
      net edge / (1 - price); capped at 25% of total capital and at
@@ -35,7 +36,11 @@ Rails enforced in code (buy):
      trades also require price <= 0.15
   R5 confidence floor 0.50; below that, no bet
   R6 minimum cash floor: a buy may not take cash below $5.00
-Sells skip R2-R6 (exits are always allowed) but still journal.
+  R7 conviction fair-value floor: a conviction bet rides to resolution, so
+     prob >= 0.40 is required; 0.40-0.45 needs NET edge >= 0.08; prob < 0.40
+     conviction is FORBIDDEN regardless of edge (must be --type trade or PASS).
+     Trades are EXEMPT from R2 and R7 — they exit on a catalyst, not resolution.
+Sells skip R2-R7 (exits are always allowed) but still journal.
 
 Event-window and market-velocity kills remain the agent's responsibility
 pre-call (they need live match context). Liquidity check: the script warns
@@ -62,6 +67,17 @@ JOURNAL = Path(r"C:\Users\gsche\.hermes\logs\bet_journal.jsonl")
 MIN_EDGE = 0.03
 MIN_EDGE_HIGH_FV = 0.05
 HIGH_FV = 0.70
+
+# R7 conviction fair-value floor (added Jun 12 2026 after the Paraguay loss).
+# A conviction bet RIDES TO RESOLUTION, so the outcome must be more-likely-than-not-ish.
+# Edge proves the PRICE is wrong; it does NOT prove a sub-coinflip side WINS. Trades are exempt.
+# PROVISIONAL PRIOR, not gospel: this floor was set from ONE loss (n=1). It is EVIDENCE-GATED —
+# kairos-settlement/scripts/floor_audit.py measures whether the bets it blocks actually win/lose;
+# tune these thresholds from that audit (need ~20 settled blocks), never from another single result.
+CONVICTION_FV_FLOOR = 0.40            # prob < this -> conviction FORBIDDEN (must be --type trade or PASS)
+CONVICTION_FV_BORDERLINE = 0.45       # [FLOOR, this) -> conviction allowed only at a fat edge
+CONVICTION_BORDERLINE_MIN_EDGE = 0.08  # required NET edge in the borderline band
+
 KELLY_FRACTION_MIN = 0.50
 KELLY_FRACTION_MAX = 0.75
 FEE_RATE = 0.07  # Kalshi taker fee: 0.07 * price * (1 - price) per contract
@@ -138,17 +154,47 @@ def main() -> int:
             return _reject(args_dict, "R1-sources", "no sources provided — no source, no bet")
         if a.prob is None or a.confidence is None:
             return _reject(args_dict, "input", "--prob and --confidence are required for buy")
+        if not (0 < a.prob < 1):
+            return _reject(args_dict, "input",
+                           f"--prob {a.prob} not in (0,1) — probability must be a fraction, e.g. 0.37")
         # R5 confidence
         if a.confidence < MIN_CONFIDENCE:
             return _reject(args_dict, "R5-confidence", f"confidence {a.confidence} < floor {MIN_CONFIDENCE}")
-        # R2 edge — NET of the Kalshi taker fee, so fee-churn never counts as edge
+        # R2/R7 edge — NET of the Kalshi taker fee, so fee-churn never counts as edge
         fee = FEE_RATE * a.price * (1 - a.price)
         edge = a.prob - a.price - fee
         min_edge = MIN_EDGE_HIGH_FV if a.prob >= HIGH_FV else MIN_EDGE
+
+        # R7 conviction fair-value floor — a conviction bet rides to RESOLUTION, so the
+        # side must actually be likely-ish to WIN. Edge proves the PRICE is wrong, not that
+        # a sub-coinflip outcome happens (Paraguay: FV ~0.37, ~0.13 net edge, expected to
+        # LOSE, lost). Trades are EXEMPT — they exit on a catalyst re-rate and never need the
+        # market to resolve YES. The forbid is checked FIRST so the agent gets the category
+        # error ("expected to lose -> trade or pass"), not a misleading thin-edge message.
+        if a.type == "conviction":
+            if a.prob < CONVICTION_FV_FLOOR:
+                return _reject(
+                    args_dict, "R7-fv-floor",
+                    f"prob {a.prob:.3f} < {CONVICTION_FV_FLOOR:.2f} conviction floor — this side is "
+                    f"EXPECTED TO LOSE, so a ride-to-resolution conviction bet is forbidden no matter "
+                    f"how large the edge ({edge:.3f}). If a dated catalyst will re-rate the PRICE up, "
+                    f"re-submit as '--type trade --cost X' (price must be <= {TRADE_MAX_PRICE:.2f}; sell "
+                    f"into the catalyst, do NOT hold to resolution); otherwise PASS.")
+            if a.prob < CONVICTION_FV_BORDERLINE:
+                # Borderline band [0.40,0.45): raise the bar. max() COMPOSES with the base/high-FV
+                # rule and never silently lowers it (bands are disjoint vs high-FV >=0.70, so this
+                # only ever lifts the 0.03 base — max() makes the precedence explicit/future-proof).
+                min_edge = max(min_edge, CONVICTION_BORDERLINE_MIN_EDGE)
+
+        # R2 edge gate (conviction only; trades skip it — they are priced on catalyst re-rate,
+        # not FV-to-resolution). Uses the possibly-raised borderline min_edge above.
         if a.type == "conviction" and edge < min_edge:
+            band = ("" if a.prob >= CONVICTION_FV_BORDERLINE
+                    else f" — borderline FV in [{CONVICTION_FV_FLOOR:.2f},{CONVICTION_FV_BORDERLINE:.2f}) "
+                         f"requires NET edge >= {CONVICTION_BORDERLINE_MIN_EDGE:.2f} to ride to resolution")
             return _reject(args_dict, "R2-edge",
                            f"net edge {edge:.3f} < required {min_edge} "
-                           f"(prob {a.prob}, price {a.price}, fee {fee:.4f})")
+                           f"(prob {a.prob}, price {a.price}, fee {fee:.4f}){band}")
 
         # ---- sizing (code decides, not the agent) ----
         if a.type == "trade":
