@@ -11,6 +11,7 @@ Disciplined World Cup 2026 betting agent on Kalshi (CFTC-regulated, US-legal). E
 
 ## Platform
 - **Kalshi**, not Polymarket. Public API at `api.elections.kalshi.com/trade-api/v2/`
+- **Each `KXWCGAME` match has THREE markets, not two**: `{HOME}`, `{AWAY}`, and **`-TIE` (the draw)**. A draw is its own standalone contract — NOT "both teams resolve NO." Kairos formerly (wrongly) believed no draw market existed; it does, on every game. See **## Draws**.
 - **Bet placement: `scripts/place_bet.py` ONLY** — the code-enforced script sizes the bet, enforces every rail, journals, and places the RSA-signed order. Never hand-roll `POST /portfolio/events/orders`. (`kairos_evaluate_bet` is a dead Polymarket plugin tool — do not attempt.)
 - **Fair value: manual Poisson model** in `references/elo-to-fv-manual.md`. `kairos_fair_value` is also a Polymarket plugin — dead, do not attempt.
 - **Match schedule & state**: `kairos_list_matches` and `kairos_get_match_state` are **ESPN-sourced and WORK** on this host — use them for kickoff times and live match state. Parameter names: `start_date_yyyymmdd` / `end_date_yyyymmdd` (YYYYMMDD format). These are NOT Polymarket tools.
@@ -45,7 +46,6 @@ Every hour 8am-10pm, checks all open match-win positions against their entry pri
 
 ### Active Positions (verified Jun 13 ~00:01 UTC from portfolio API)
 
-- **Paraguay** (USA-PAR Jun 12) — Ticker `KXWCGAME-26JUN12USAPAR-PAR`, 53 shares @ 23.8¢ blended ($12.62). Placed Jun 11 on Paraguay undervalued at +100 true home FV ~37% vs 23¢ market.
 - **Morocco** (BRA-MAR Jun 13) — Ticker `KXWCGAME-26JUN13BRAMAR-MAR`, 52 shares @ 18¢ ($9.36). Placed Jun 12 on Brazil injury crisis: Neymar/Militão/Rodrygo/Estêvão/Wesley out.
 - **Japan** (NED-JPN Jun 14) — Ticker `KXWCGAME-26JUN14NEDJPN-JPN`, 24 shares @ ~26¢ ($6.24). Placed by cron job (Jun 12 scan: benchmark Elo edge ~6.7¢ net vs NED).
 - **Ecuador** (CIV-ECU Jun 14) — Ticker `KXWCGAME-26JUN14CIVECU-ECU`, 21 shares @ 41¢ ($8.61). ⚠️ This is Ivory Coast vs Ecuador, NOT Ecuador vs Curaçao.
@@ -54,11 +54,13 @@ Every hour 8am-10pm, checks all open match-win positions against their entry pri
 - **Argentina** (tournament winner) — Ticker `KXMENWORLDCUP-26-AR`, 3 shares @ ~8.7¢ ($0.26)
 - **Ivory Coast** (tournament winner, trade) — Ticker `KXMENWORLDCUP-26-CIV`, 250 shares @ 0.4¢ ($1.00)
 - **Sweden** (Group F qualification) — Ticker `KXWCGROUPQUAL-26F-SWE`, 1 share @ 64¢ ($0.64). Placed Jun 11 on injury divergence.
+- **Paraguay** (tournament winner, trade) — Ticker `KXMENWORLDCUP-26-PAR`, 1500 shares @ 0.2¢ ($3.00). Placed Jun 13 as re-rate trade.
 
 ### Settled
 - **Mexico** (MEX-RSA Jun 11) — Won 2-0, +$2.57 net P&L ✅
 - **Czechia** (KOR-CZE Jun 11/12) — Lost, -$0.35 net P&L ❌
 - **Bosnia and Herzegovina** (CAN-BIH Jun 12) — Settled from portfolio (no longer held).
+- **Paraguay** (USA-PAR Jun 12) — Lost, -$12.62 ❌. The canonical anti-example: 37% FV held as conviction — now forbidden under R7.
 
 ### ⚠️ Authoritative Position Source
 
@@ -128,6 +130,7 @@ For each flagged mover, brief narrative context: why it moved (tournament narrat
 3. Source Elo from eloratings.net
 4. Compute fair value — for **match markets**, use the manual Poisson model in `references/elo-to-fv-manual.md`. For **tournament futures** (KXMENWORLDCUP, KXWCROUND, KXWCSTAGEOFELIM, KXWCGROUPQUAL), use the relative-Elo-share method in `references/tournament-futures-fv.md`. Feed it Elo ratings from step 3. The Elo reference includes calibration points to verify your output.
 5. Contextual cross-checks: recent form, squad value delta, head-to-head, weather forecast — via **`web_search`** (Perplexity; focused per-check queries; cited Transfermarkt/ESPN/FIFA, ~$0.005 each). See ## Cross-Checks. Venue/climate IDENTITY stays anchored to `references/wc2026-venue-heat.md` (substrate rule), never to Perplexity.
+5b. **Draw (OBSERVE):** price the `-TIE` market — the Poisson draw probability (step 4) is your draw FV — tag the draw signals, and log it via `draw_observe.py` (see **## Draws**). Do NOT place a live draw bet (OBSERVE mode; R7 blocks it anyway).
 6. Live X signals — confirmed lineups, breaking injuries, late team news — via `delegate_task`/`x_search` (Grok); X is the primary source for these. Keep the cost discipline: ≤1-2 delegate children, ≤2 x_search calls. Do NOT re-run the step-5 contextual cross-checks here — those are `web_search` now (one path per layer).
 7. Check bankroll — RSA-signed GET /portfolio/balance. **Use the inline Python pattern** (see ## Kalshi Auth — Inline Python Pattern below). The standalone `kalshi_auth.py` script path is `/c/Users/gsche/.hermes/kalshi/kalshi_auth.py` but the inline pattern is preferred (avoids subprocess path issues and stale timestamps between auth+curl).
 8. Compute edge = adjusted_fair_value - yes_ask - fee, where fee = 0.07 × price × (1 - price) (Kalshi taker fee, ~1-1.75¢ at mid prices — a gross edge that fees eat is NOT an edge). If net edge < 3¢ (or < 5¢ when FV ≥ 70%), pass — thin edges on high-probability outcomes size too small to matter. See pitfall: "Thin edge on high-probability bets." **Then the conviction-FV floor (R7):** if FV < 40%, a conviction bet is FORBIDDEN regardless of edge size (the side is expected to lose — it must be a `--type trade` if ≤15¢, else a PASS); if 40% ≤ FV < 45%, require net edge ≥ 8¢ to ride to resolution.
@@ -326,7 +329,32 @@ F. **Injury/Suspension Crisis** — when a team loses 3+ key starters (best play
 
 Example (Jun 11) — **CANONICAL ANTI-EXAMPLE, the Paraguay loss**: USA-PAR benchmark had PAR 45.6% at +35 neutral; at +100 true home, PAR FV shifted to ~37%. Market priced PAR at 23¢ — the 14¢ edge survived the adjustment, so Kairos placed a **conviction** bet. It lost. The edge was real (price was wrong) but **37% FV means Paraguay loses 63% of the time** — riding a sub-coinflip outcome to resolution was the error. Under the **R7 conviction floor (added after this loss), 37% FV is below 0.40 → conviction is FORBIDDEN**; and at 23¢ it's above the 15¢ trade ceiling, so the correct action was a **PASS**. Edge tells you the price is wrong; it does NOT tell you the side wins.
 
-Example (Jun 13): Brazil vs Morocco — Brazil missing Neymar, Rodrygo, Militão, Estêvão, Wesley (5 absences incl. spine). Morocco FV adjusted from ~23% (Elo-only) to ~30% after injury crisis discount to Brazil. Market at 18¢ → 12¢ raw edge. See `references/injury-adjustment.md` for the full worked example.
+Example (Jun 13) — **the draw lesson**: Brazil vs Morocco — Brazil missing Neymar, Rodrygo, Militão, Estêvão, Wesley (5 absences incl. spine). Morocco FV adjusted from ~23% (Elo-only) to ~30% after injury crisis discount. Kairos bet Morocco-to-win at 18¢. **OUTCOME: it DREW 1-1.** The Morocco-win bet LOST — but the **`-TIE` (draw) market resolved YES**. The correct read on a depleted favorite + low-block underdog was the DRAW, which Kairos was structurally blind to (it didn't know the `-TIE` market existed). A defensive underdog often defends well enough not to *lose*, not well enough to *win* — that's the draw. See **## Draws**.
+
+## Draws — the `-TIE` market (OBSERVE mode, added Jun 14 2026)
+
+Every `KXWCGAME` event has a standalone **`-TIE`** (draw) contract. Draws (~19-25% of group games) are a real, liquid market Kairos ignored for too long. The 48-team format makes them structurally interesting, but the edge is **UNPROVEN** — so Kairos is in **OBSERVE mode**: price every draw, log it, let the data decide. Do NOT place a live draw bet yet (the R7 floor blocks it anyway — draws price ~0.25-0.32 < the 0.40 conviction floor).
+
+**Draw fair value:** the Poisson model (`references/elo-to-fv-manual.md`) already outputs P(win/**DRAW**/loss) — use its draw probability as the draw FV. Then weigh the two signal buckets:
+
+**Always-on signals (any matchday)** — these drove all 3 of the early-WC-2026 draws:
+- **Defensive-underdog DNA** (a low-block / counter team — Morocco, Bosnia, Qatar): **NEAR-NECESSARY**. No draw lean without it.
+- **Depleted favorite** — favorite missing its primary creator/finisher per *public* team news (Brazil w/o Neymar; Canada w/o Davies): the best *observable* pre-match signal — bump draw FV.
+- **Hot afternoon venue** — forecastable; bump for hot venues, de-weight cool/evening. Anchor the venue to `references/wc2026-venue-heat.md` per the substrate rule — NEVER invent it.
+
+**Matchday-2/3 signals (qualification math live)** — *the richest predictable edge, not yet observed*:
+- **Needs-only-a-point** — a team that qualifies / stays safe with a draw (4 pts ≈ through; best-3rd-placed safety net) plays for it. For every MD2/3 game, fetch current group standings (Kalshi `KXWCGROUPQUAL` or `web_search`) and flag this.
+- **Both content** — if a draw advances both teams, expect mutual non-aggression.
+
+**The Qatar-Switzerland caution:** do NOT back a draw just because retail over-backs the favorite. If the favorite's expected-goals edge is large, the draw is a low-probability tail and the contract is fair-or-rich (Qatar-Switzerland drew only on a stoppage-time own goal — it was NOT a +EV bet despite cashing). The underdog must be **genuinely live**, not merely surviving. Require: defensive-underdog DNA **+ at least one more** always-on signal **+ positive net edge** before a draw is even a candidate.
+
+**OBSERVE workflow — do this for every scanned game:**
+1. Compute draw FV from the Poisson model; read the `-TIE` `yes_ask`.
+2. Tag which signals fired (above).
+3. Log it: `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/draw_observe.py" --ticker {EVENT}-TIE --draw-fv FV --tie-price ASK --matchday N --signals "defensive-underdog,depleted-favorite,..." --reasoning "..."`
+4. **Do NOT bet it live.** `draw_audit.py` (run in daily-settle) is **CLV-first**: it reconstructs the pre-kickoff `-TIE` closing line (Kalshi candlesticks) and measures whether the line moved TOWARD our draw lean — a per-**game** signal that converges in ~20 GAMES (a couple weeks of group play), NOT the ~100 games that waiting for 20-30 realized draws would need. Once `draw_audit` shows **positive CLV over ~20 games** (model beating the close; realized draw P&L as slow confirmation), we enable live draw betting with a draw-specific **0.25-0.32 floor** (a normal draw isn't "a team that loses").
+
+**Combined "favorite won't win" plays** (draw + underdog-win, or `{FAVORITE}` NO): when enabled, both legs are CORRELATED (both die if the favorite wins) — size as **ONE thesis**, not two independent Kelly bets, or you over-concentrate. (Not active in OBSERVE mode.)
 
 ## Settlement, Reconciliation & CLV
 
