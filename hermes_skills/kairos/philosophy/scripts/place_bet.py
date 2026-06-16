@@ -44,6 +44,8 @@ Rails enforced in code (buy):
      and R3's FV size shrink. Edge-size/confidence never override the floor.
   R8 speculative-sleeve cap: aggregate OPEN sub-0.40 conviction exposure <= 20% of
      total capital (ruin is a portfolio property). Trades are EXEMPT from R2/R7/R8.
+  R9 trade-bucket cap: aggregate OPEN --type trade exposure <= 10% of total capital
+     (per trade-screen); a single trade is still <= 5% (R4) and price <= 15c.
 Sells skip R2-R7 (exits are always allowed) but still journal.
 
 Event-window and market-velocity kills remain the agent's responsibility
@@ -97,6 +99,7 @@ FEE_RATE = 0.07  # Kalshi taker fee: 0.07 * price * (1 - price) per contract
 MAX_PCT_OF_CAPITAL = 0.20  # global per-bet cap (trimmed from 0.25 — 25% of a small book on ONE bet is the real ruin lever)
 TRADE_MAX_PCT_OF_CAPITAL = 0.05
 TRADE_MAX_PRICE = 0.15
+TRADE_BUCKET_CAP = 0.10  # R9: aggregate OPEN --type trade exposure <= 10% of total capital (trade-screen bucket rule)
 MIN_CONFIDENCE = 0.50
 CASH_FLOOR_DOLLARS = 5.00
 
@@ -154,6 +157,33 @@ def _reject(args_dict: dict, rail: str, detail: str) -> int:
     _journal({"status": "rejected", "rail": rail, "detail": detail, "input": args_dict})
     print(json.dumps({"status": "rejected", "rail": rail, "detail": detail}, indent=2))
     return 0  # rejection is a successful, sanctioned outcome
+
+
+def _trade_bucket_exposure(positions: dict) -> float:
+    """Sum of current market exposure of OPEN positions entered as --type trade (per the bet journal).
+    Best-effort; returns 0.0 if the journal is missing. Used by R9 to bound the aggregate trade bucket."""
+    is_trade: dict = {}
+    try:
+        for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            if r.get("status") != "placed":
+                continue
+            inp = r.get("input", {}) or {}
+            if inp.get("side") != "buy":
+                continue
+            tk = inp.get("ticker")
+            if tk:
+                is_trade[tk] = (inp.get("type") == "trade")  # chronological file -> latest entry wins
+    except FileNotFoundError:
+        return 0.0
+    total = 0.0
+    for mp in positions.get("market_positions", []):
+        if is_trade.get(mp.get("ticker", "")):
+            total += abs(float(mp.get("market_exposure_dollars", 0) or 0))
+    return total
 
 
 def _spec_sleeve_exposure(positions: dict) -> float:
@@ -266,6 +296,17 @@ def main() -> int:
             cap = total_capital * TRADE_MAX_PCT_OF_CAPITAL
             if a.cost > cap:
                 return _reject(args_dict, "R4-trade", f"cost ${a.cost:.2f} > {TRADE_MAX_PCT_OF_CAPITAL:.0%} of capital (${cap:.2f})")
+            # R9 trade-bucket cap — aggregate open --type trade exposure <= 10% of total capital
+            # (trade-screen rule). Best-effort + FAIL-SAFE: a data error skips the check, never blocks erroneously.
+            try:
+                open_trade = _trade_bucket_exposure(positions)
+                if open_trade + a.cost > TRADE_BUCKET_CAP * total_capital:
+                    return _reject(args_dict, "R9-trade-bucket",
+                                   f"trade bucket full: open trade exposure ${open_trade:.2f} + this ${a.cost:.2f} "
+                                   f"> {TRADE_BUCKET_CAP:.0%} of capital (${TRADE_BUCKET_CAP * total_capital:.2f}) — "
+                                   f"exit a flat/dead trade or size down.")
+            except Exception as exc:  # noqa: BLE001 — bucket cap must never block on a data error
+                print(f"WARNING: R9 trade-bucket check skipped: {exc}", file=sys.stderr)
             count = int(a.cost / a.price)
         else:
             # R3 confidence-scaled, FV-SHRUNK Kelly of TOTAL capital, capped.

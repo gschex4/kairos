@@ -174,6 +174,32 @@ downside. Trade bucket ≤10% of bankroll total; any single trade ≤5%.
 See `references/trade-exit-strategy.md` for post-entry management — the plan is to
 sell into the re-rate, not to hold for the outcome.
 
+## Futures trade desk (autonomous re-rate trading)
+
+The **`futures-trade-desk`** cron (every 6h) actively works the futures surface —
+tournament winner (KXMENWORLDCUP), golden boot (KXWCGOALLEADER), awards (KXWCAWARD),
+group qualification (KXWCGROUPQUAL), reach round (KXWCROUND) — as **buy-low /
+sell-high re-rate trades**, fully autonomously. It owns the whole trade lifecycle:
+**EXIT first** (manage held trades down the exit ladder via `place_bet.py sell`), then
+**ORIGINATE** (run the trade-screen across the surface via `place_bet.py buy --type trade`).
+
+- **Ownership is by TYPE, not series.** The desk owns positions journaled `--type trade`
+  (plus cheap, unjournaled legacy futures trades). It **NEVER** touches a **conviction**
+  hold — a group-qualification or tournament-winner bet bought to ride to resolution stays
+  with `par-position-watch` (conviction = match-win KXWCGAME + conviction futures, the
+  15%/2¢ rule). Misrouting a conviction hold to the desk = it gets exit-laddered and sold,
+  which is wrong (sells skip all rails, so this scoping is the only guard).
+- **Sells are catalyst-gated.** The ladder fraction fires only when a *catalyst* drove the
+  move (a win/goal/draw-reveal/qual shift). A no-catalyst price wobble — especially a
+  sub-penny dust move (0.2¢↔0.4¢ is ±100% but pure noise) — is NOT a re-rate; don't sell it.
+- **Exit > entry.** Buy-low is trivial; the **sell** is the point and was historically the
+  gap (zero sells were ever executed). Sell into post-catalyst strength (24–48h), limit-sell
+  thin books, trickle large exits — see `references/trade-exit-strategy.md`.
+- **Caps (R4/R9):** a single trade ≤ 5% of capital and price ≤ 15¢; aggregate open
+  `--type trade` exposure ≤ 10% (R9). A `rejected` R9 = bucket full → exit a flat trade or
+  pass. Favor names a catalyst will pull **buyers** to (Q4 exitability) — a cheap contract
+  you can't sell is a held lottery ticket, not a trade.
+
 ## Hard Rails
 - **Autonomous mode: NEVER ask permission to bet.** Operation mode is FULLY AUTONOMOUS. When you have edge + sources + sizing within rails, place the bet and report what you did. Do not say "Want me to place it?", "Ready to go?", or any permission-seeking variant. The only acceptable post-research output is the bet confirmation or an explicit pass-with-reason. Asking permission when rails are green is a process failure that wastes operator attention.
 
@@ -183,7 +209,7 @@ sell into the re-rate, not to hold for the outcome.
 - Confidence floor 0.50
 - **Conviction FV floor (R7 v2): only FV < 0.20 FORBIDDEN as conviction (→ `--type trade` ≤15¢, else PASS). From 0.20 up ALLOWED but throttled (R2 FV-scaled edge + R3 FV-shrunk size + R8 sleeve). Edge-size/confidence NEVER override the floor or buy a bigger stake. Trades exempt.**
 - Conviction sizing: confidence-scaled, **FV-SHRUNK** Kelly (fraction = confidence clamped 0.50-0.75 × an FV shrink 1.0/.75/.55/.40) of TOTAL capital; capped at **20%** of total capital, **6% for sub-0.40 bets**, and cash above the $5 floor. **R8:** aggregate open sub-0.40 conviction exposure ≤ 20% of capital (ruin is a portfolio property).
-- Trade sizing: dollars-at-risk ≤ 5% of total capital, price ≤ 15¢
+- Trade sizing: dollars-at-risk ≤ 5% of total capital, price ≤ 15¢ (R4). **R9:** aggregate open `--type trade` exposure ≤ 10% of total capital (the trade bucket)
 - Cash floor: no buy that takes cash below $5
 
 **Agent-enforced** (need live match context the script can't see):
