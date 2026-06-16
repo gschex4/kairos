@@ -60,7 +60,7 @@ Every hour 8am-10pm, checks all open match-win positions against their entry pri
 - **Mexico** (MEX-RSA Jun 11) — Won 2-0, +$2.57 net P&L ✅
 - **Czechia** (KOR-CZE Jun 11/12) — Lost, -$0.35 net P&L ❌
 - **Bosnia and Herzegovina** (CAN-BIH Jun 12) — Settled from portfolio (no longer held).
-- **Paraguay** (USA-PAR Jun 12) — Lost, -$12.62 ❌. The canonical anti-example: 37% FV held as conviction — now forbidden under R7.
+- **Paraguay** (USA-PAR Jun 12) — Lost, -$12.62 ❌. The canonical anti-example — but the error was **SIZE, not the 37% FV**: a ~$12.62 conviction (~15–25% of the book) ridden as one big hold. Under R7 v2 the same bet is a SMALL (~$6, 6%-capped) conviction, not a ban. See rails R7/R8.
 
 ### ⚠️ Authoritative Position Source
 
@@ -133,8 +133,8 @@ For each flagged mover, brief narrative context: why it moved (tournament narrat
 5b. **Draw (OBSERVE):** price the `-TIE` market — the Poisson draw probability (step 4) is your draw FV — tag the draw signals, and log it via `draw_observe.py` (see **## Draws**). Do NOT place a live draw bet (OBSERVE mode; R7 blocks it anyway).
 6. Live X signals — confirmed lineups, breaking injuries, late team news — via `delegate_task`/`x_search` (Grok); X is the primary source for these. Keep the cost discipline: ≤1-2 delegate children, ≤2 x_search calls. Do NOT re-run the step-5 contextual cross-checks here — those are `web_search` now (one path per layer).
 7. Check bankroll — RSA-signed GET /portfolio/balance. **Use the inline Python pattern** (see ## Kalshi Auth — Inline Python Pattern below). The standalone `kalshi_auth.py` script path is `/c/Users/gsche/.hermes/kalshi/kalshi_auth.py` but the inline pattern is preferred (avoids subprocess path issues and stale timestamps between auth+curl).
-8. Compute edge = adjusted_fair_value - yes_ask - fee, where fee = 0.07 × price × (1 - price) (Kalshi taker fee, ~1-1.75¢ at mid prices — a gross edge that fees eat is NOT an edge). **Compute it for BOTH sides** (favorite, underdog) and the draw — the cheap side is not automatically the value side; an underpriced favorite is a real edge (see ## Backing a favorite). If net edge < 3¢ (or < 5¢ when FV ≥ 70%), pass — thin edges on high-probability outcomes size too small to matter. See pitfall: "Thin edge on high-probability bets." **Then the conviction-FV floor (R7):** if FV < 40%, a conviction bet is FORBIDDEN regardless of edge size (the side is expected to lose — it must be a `--type trade` if ≤15¢, else a PASS); if 40% ≤ FV < 45%, require net edge ≥ 8¢ to ride to resolution.
-9. **Place bet via the code-enforced script** — `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/place_bet.py" buy --ticker T --price 0.46 --prob 0.55 --confidence 0.7 --reasoning "..." --sources "..."` (terminal, workdir=/tmp; add `--type trade --cost X` for re-rate trades, `--dry-run` to preview). The SCRIPT computes the size (confidence-scaled Kelly on TOTAL capital, net of fees), enforces the rails (sources, min net edge, confidence floor, **conviction FV floor R7: prob ≥ 0.40, 0.40–0.45 needs ≥8¢ net edge, <0.40 forbidden as conviction**, 25%-of-capital cap, $5 cash floor), journals the decision, and places the order. Never compute a share count yourself and never POST `/portfolio/events/orders` directly. A `rejected` status is final — pass. (`kairos_evaluate_bet` is a dead Polymarket plugin tool — do not attempt.)
+8. Compute edge = adjusted_fair_value - yes_ask - fee, where fee = 0.07 × price × (1 - price) (Kalshi taker fee, ~1-1.75¢ at mid prices — a gross edge that fees eat is NOT an edge). **Compute it for BOTH sides** (favorite, underdog) and the draw — the cheap side is not automatically the value side; an underpriced favorite is a real edge (see ## Backing a favorite). If net edge < 3¢ (or < 5¢ when FV ≥ 70%), pass — thin edges on high-probability outcomes size too small to matter. See pitfall: "Thin edge on high-probability bets." The required net edge also SCALES with FV (you fight the favorite-longshot bias on cheap sides): ≥4¢ at FV .35–.45, ≥5¢ at .25–.35, ≥6¢ at .20–.25. **Then the conviction floor (R7 v2):** only FV < 0.20 is forbidden as conviction (→ `--type trade` ≤15¢, else PASS); from 0.20 up it's ALLOWED but sized SMALL — `place_bet.py` shrinks the Kelly stake as FV falls and caps sub-0.40 bets at 6% of capital (R8: 20% aggregate sleeve). **Size for the loss; don't refuse the bet** — underdog value (FV 0.25–0.40) is the core edge.
+9. **Place bet via the code-enforced script** — `python3 "C:/Users/gsche/.hermes/skills/kairos-philosophy/scripts/place_bet.py" buy --ticker T --price 0.46 --prob 0.55 --confidence 0.7 --reasoning "..." --sources "..."` (terminal, workdir=/tmp; add `--type trade --cost X` for re-rate trades, `--dry-run` to preview). The SCRIPT computes the size (confidence-scaled Kelly on TOTAL capital, net of fees), enforces the rails (sources, FV-scaled min net edge, confidence floor, **conviction FV floor R7 v2: only FV <0.20 forbidden; sub-0.40 throttled — FV-scaled edge + FV-shrunk Kelly + 6% per-bet & 20% sleeve caps (R8)**, 20%-of-capital cap, $5 cash floor), journals the decision, and places the order. Never compute a share count yourself and never POST `/portfolio/events/orders` directly. A `rejected` status is final — pass. (`kairos_evaluate_bet` is a dead Polymarket plugin tool — do not attempt.)
 10. Log bet details to memory (or output if memory unavailable)
 
 ## Trade-Candidate Screening (buy-cheap / sell-into-the-re-rate)
@@ -148,10 +148,11 @@ Two kinds of position exist — know which you're opening:
   push the *price* up, and you **sell into that** before resolution. You do NOT need
   it to hit $1.00.
 
-**The resolved tension (Paraguay):** a sub-0.40-FV side priced *above* the 15¢ trade ceiling
-is neither a conviction bet (R7 forbids it) nor a trade (R4 ceiling) — it is a **structural PASS**,
-and that is the system working ("a pass is a successful outcome"). A trade is defined by its
-*sell-into-a-dated-catalyst EXIT*, not by relabeling a hold to dodge the floor — a "trade" with
+**The resolved tension (Paraguay, R7 v2):** a sub-0.40-FV side with real edge is now a SMALL throttled
+conviction (FV-shrunk Kelly, 6%-capped), NOT a structural pass — banning the underdog-value band was
+the overcorrection that flatlined the journal. Only the deep tail (FV < 0.20) priced *above* the 15¢
+trade ceiling is the genuine trade-or-pass squeeze. A trade is still defined by its
+*sell-into-a-dated-catalyst EXIT*, not by relabeling a hold to dodge a rail — a "trade" with
 no dated catalyst (trade-screen Q2) is a rail violation, not a loophole.
 
 Before answering "who's a good long shot" or opening any cheap (≤15¢) position as a
@@ -178,10 +179,10 @@ sell into the re-rate, not to hold for the outcome.
 
 **Code-enforced** (inside `scripts/place_bet.py` — a `rejected` status is final, do not route around it):
 - Sourced edge required (no source = no bet)
-- Minimum NET edge 3¢ (5¢ when FV ≥ 70%; **8¢ in the 0.40–0.45 borderline band**) — edge is measured after the Kalshi taker fee
+- Minimum NET edge SCALES with FV (favorite-longshot bias): 3¢ at FV≥0.45 (5¢ at FV≥0.70), **4¢ at .35–.45, 5¢ at .25–.35, 6¢ at .20–.25** — measured after the Kalshi taker fee
 - Confidence floor 0.50
-- **Conviction FV floor (R7): prob ≥ 0.45 normal; 0.40–0.45 conviction only if NET edge ≥ 8¢; prob < 0.40 conviction FORBIDDEN (must be `--type trade` if ≤15¢, else PASS). Trades exempt.**
-- Conviction sizing: confidence-scaled Kelly (fraction = confidence, clamped 0.50-0.75) of TOTAL capital (cash + WC exposure), capped at 25% of total capital and at cash above the $5 floor
+- **Conviction FV floor (R7 v2): only FV < 0.20 FORBIDDEN as conviction (→ `--type trade` ≤15¢, else PASS). From 0.20 up ALLOWED but throttled (R2 FV-scaled edge + R3 FV-shrunk size + R8 sleeve). Edge-size/confidence NEVER override the floor or buy a bigger stake. Trades exempt.**
+- Conviction sizing: confidence-scaled, **FV-SHRUNK** Kelly (fraction = confidence clamped 0.50-0.75 × an FV shrink 1.0/.75/.55/.40) of TOTAL capital; capped at **20%** of total capital, **6% for sub-0.40 bets**, and cash above the $5 floor. **R8:** aggregate open sub-0.40 conviction exposure ≤ 20% of capital (ruin is a portfolio property).
 - Trade sizing: dollars-at-risk ≤ 5% of total capital, price ≤ 15¢
 - Cash floor: no buy that takes cash below $5
 
@@ -331,7 +332,7 @@ F. **Injury/Suspension Crisis** — when a team loses 3+ key starters (best play
    - Verify from named sources (team accounts, major journalists) — never trust a single unsourced rumor
    - Re-check near kickoff: a late scratch from the XI not on the injury report can create a last-minute edge
 
-Example (Jun 11) — **CANONICAL ANTI-EXAMPLE, the Paraguay loss**: USA-PAR benchmark had PAR 45.6% at +35 neutral; at +100 true home, PAR FV shifted to ~37%. Market priced PAR at 23¢ — the 14¢ edge survived the adjustment, so Kairos placed a **conviction** bet. It lost. The edge was real (price was wrong) but **37% FV means Paraguay loses 63% of the time** — riding a sub-coinflip outcome to resolution was the error. Under the **R7 conviction floor (added after this loss), 37% FV is below 0.40 → conviction is FORBIDDEN**; and at 23¢ it's above the 15¢ trade ceiling, so the correct action was a **PASS**. Edge tells you the price is wrong; it does NOT tell you the side wins.
+Example (Jun 11) — **CANONICAL ANTI-EXAMPLE, the Paraguay loss**: USA-PAR benchmark had PAR 45.6% at +35 neutral; at +100 true home, PAR FV shifted to ~37%. Market priced PAR at 23¢ — the 14¢ edge survived the adjustment, so Kairos placed a **conviction** bet. It lost. The edge was real (price was wrong) but **37% FV means Paraguay loses 63% of the time** — riding a sub-coinflip outcome to resolution was the error. The fix (R7 v2, Jun 16): the error was **SIZE, not the 37% FV** — a ~$12.62 bet (~15–25% of the book) ridden as one oversized hold. Under R7 v2 the SAME bet is allowed as a **small ~$6 conviction** (6%-capped, FV-shrunk), so a loss is survivable and the +EV edge compounds over many such bets. Banning the whole sub-0.40 band (original R7) was the overcorrection — it flatlined the journal for 3 days. Edge tells you the price is wrong, not that the side wins: so **size for the loss, don't refuse the bet**.
 
 Example (Jun 13) — **the draw lesson**: Brazil vs Morocco — Brazil missing Neymar, Rodrygo, Militão, Estêvão, Wesley (5 absences incl. spine). Morocco FV adjusted from ~23% (Elo-only) to ~30% after injury crisis discount. Kairos bet Morocco-to-win at 18¢. **OUTCOME: it DREW 1-1.** The Morocco-win bet LOST — but the **`-TIE` (draw) market resolved YES**. The correct read on a depleted favorite + low-block underdog was the DRAW, which Kairos was structurally blind to (it didn't know the `-TIE` market existed). A defensive underdog often defends well enough not to *lose*, not well enough to *win* — that's the draw. See **## Draws**.
 

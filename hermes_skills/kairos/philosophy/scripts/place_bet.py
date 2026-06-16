@@ -26,20 +26,24 @@ SELL (exit / cash-out / trade-ladder tranche) — explicit count required:
 
 Rails enforced in code (buy):
   R1 sources required (non-empty)
-  R2 NET edge = prob - price - fee >= 0.03 (>= 0.05 when prob >= 0.70; >= 0.08 in
-     the 0.40-0.45 borderline band, see R7), fee = 0.07 * price * (1 - price)
-  R3 conviction size = confidence-scaled Kelly of TOTAL capital (cash + WC
-     exposure): fraction = confidence clamped to [0.50, 0.75], applied to
-     net edge / (1 - price); capped at 25% of total capital and at
-     available cash above the $5 floor
+  R2 NET edge = prob - price - fee, fee = 0.07*price*(1-price); required edge SCALES
+     with FV (favorite-longshot bias): >=0.03 at FV>=0.45 (>=0.05 at FV>=0.70),
+     >=0.04 at FV 0.35-0.45, >=0.05 at FV 0.25-0.35, >=0.06 at FV 0.20-0.25
+  R3 conviction size = confidence-scaled, FV-SHRUNK Kelly of TOTAL capital (cash +
+     WC exposure): fraction = confidence clamped [0.50,0.75], x an FV shrink
+     (1.0 >=0.45, 0.75 at .35-.45, 0.55 at .25-.35, 0.40 at .20-.25), applied to
+     net edge/(1-price); capped at 20% of total capital, at 6% for sub-0.40 bets,
+     and at available cash above the $5 floor
   R4 trade size = --cost, capped at 5% of total capital (cash + WC exposure);
      trades also require price <= 0.15
   R5 confidence floor 0.50; below that, no bet
   R6 minimum cash floor: a buy may not take cash below $5.00
-  R7 conviction fair-value floor: a conviction bet rides to resolution, so
-     prob >= 0.40 is required; 0.40-0.45 needs NET edge >= 0.08; prob < 0.40
-     conviction is FORBIDDEN regardless of edge (must be --type trade or PASS).
-     Trades are EXEMPT from R2 and R7 — they exit on a catalyst, not resolution.
+  R7 conviction fair-value FLOOR (graduated, v2): only the DEEP longshot tail is
+     banned - prob < 0.20 conviction is FORBIDDEN (--type trade <=15c or PASS).
+     From 0.20 up, conviction is ALLOWED but throttled by R2's FV-scaled edge bar
+     and R3's FV size shrink. Edge-size/confidence never override the floor.
+  R8 speculative-sleeve cap: aggregate OPEN sub-0.40 conviction exposure <= 20% of
+     total capital (ruin is a portfolio property). Trades are EXEMPT from R2/R7/R8.
 Sells skip R2-R7 (exits are always allowed) but still journal.
 
 Event-window and market-velocity kills remain the agent's responsibility
@@ -68,24 +72,58 @@ MIN_EDGE = 0.03
 MIN_EDGE_HIGH_FV = 0.05
 HIGH_FV = 0.70
 
-# R7 conviction fair-value floor (added Jun 12 2026 after the Paraguay loss).
-# A conviction bet RIDES TO RESOLUTION, so the outcome must be more-likely-than-not-ish.
-# Edge proves the PRICE is wrong; it does NOT prove a sub-coinflip side WINS. Trades are exempt.
-# PROVISIONAL PRIOR, not gospel: this floor was set from ONE loss (n=1). It is EVIDENCE-GATED —
-# kairos-settlement/scripts/floor_audit.py measures whether the bets it blocks actually win/lose;
-# tune these thresholds from that audit (need ~20 settled blocks), never from another single result.
-CONVICTION_FV_FLOOR = 0.40            # prob < this -> conviction FORBIDDEN (must be --type trade or PASS)
-CONVICTION_FV_BORDERLINE = 0.45       # [FLOOR, this) -> conviction allowed only at a fat edge
-CONVICTION_BORDERLINE_MIN_EDGE = 0.08  # required NET edge in the borderline band
+# R7 v2 (Jun 16 2026) — GRADUATED low-FV control; REPLACES the hard FV<0.40 conviction BAN.
+# Research consensus (Kelly / value-CLV / favorite-longshot / guardrail-design / calibration lenses):
+# the Paraguay loss was a SIZING + CORRELATION failure, not a selection failure. The hard FV>=0.40 ban
+# conflated EXPECTED VALUE with P(win) and banned the exact band (underdog value, FV 0.25-0.40) the
+# thesis is built to harvest — it flatlined the bet journal (0 bets in 3 days; 14/23 historical
+# convictions retro-banned, incl. ALL 5 match-win bets ever placed). The fix is SIZE DISCIPLINE, not a
+# category ban: a deep-tail floor + an FV-scaled size shrink + an FV-scaled min-edge + a per-bet and an
+# aggregate "speculative sleeve" exposure cap on sub-0.40 conviction (ruin is a PORTFOLIO property —
+# bound it with sizing + an exposure budget, not an outcome-probability ban). A single half-Kelly bet
+# at FV~0.37 is then ~$3-6 on a $100 book, not the ~$12 Paraguay lost.
+# PROVISIONAL + EVIDENCE-GATED: tune these from floor_audit / draw_audit CLV over ~20-30 settled cases,
+# never from one result, in EITHER direction. Genuine Paraguay lessons PRESERVED: edge-size and
+# confidence NEVER buy a path past the floor or caps; only a sourced FACT lifts FV; and correlated
+# "favorite-won't-win" legs (a draw + that game's underdog) are sized as ONE thesis (agent-enforced).
+CONVICTION_FV_FLOOR = 0.20    # FV < this -> conviction FORBIDDEN (deep longshot tail); --type trade (<=15c) or PASS
+SPEC_FV_THRESHOLD = 0.40      # "speculative sleeve" = conviction positions entered at FV below this
+SPEC_PER_BET_CAP = 0.06       # a single sub-0.40 conviction <= 6% of total capital
+SPEC_SLEEVE_CAP = 0.20        # aggregate OPEN sub-0.40 conviction exposure <= 20% of total capital
 
 KELLY_FRACTION_MIN = 0.50
 KELLY_FRACTION_MAX = 0.75
 FEE_RATE = 0.07  # Kalshi taker fee: 0.07 * price * (1 - price) per contract
-MAX_PCT_OF_CAPITAL = 0.25
+MAX_PCT_OF_CAPITAL = 0.20  # global per-bet cap (trimmed from 0.25 — 25% of a small book on ONE bet is the real ruin lever)
 TRADE_MAX_PCT_OF_CAPITAL = 0.05
 TRADE_MAX_PRICE = 0.15
 MIN_CONFIDENCE = 0.50
 CASH_FLOOR_DOLLARS = 5.00
+
+
+def _fv_size_shrink(fv: float) -> float:
+    """Low-FV estimates are noisier -> shrink the Kelly stake (encode model risk as SIZE, not a wall)."""
+    if fv >= 0.45:
+        return 1.00
+    if fv >= 0.35:
+        return 0.75
+    if fv >= 0.25:
+        return 0.55
+    return 0.40  # 0.20-0.25 (deep but allowed)
+
+
+def _fv_min_edge(fv: float) -> float:
+    """Required NET edge scales with FV: cheap sides fight the favorite-longshot bias, so demand a
+    larger mispricing as FV falls. (Trades skip this — they exit on a catalyst, not at resolution.)"""
+    if fv >= HIGH_FV:
+        return MIN_EDGE_HIGH_FV  # 0.05 at FV>=0.70 (thin edge on an expensive contract)
+    if fv >= 0.45:
+        return MIN_EDGE          # 0.03
+    if fv >= 0.35:
+        return 0.04
+    if fv >= 0.25:
+        return 0.05
+    return 0.06                  # 0.20-0.25
 
 
 def _api(method: str, path: str, body: dict | None = None) -> dict:
@@ -116,6 +154,38 @@ def _reject(args_dict: dict, rail: str, detail: str) -> int:
     _journal({"status": "rejected", "rail": rail, "detail": detail, "input": args_dict})
     print(json.dumps({"status": "rejected", "rail": rail, "detail": detail}, indent=2))
     return 0  # rejection is a successful, sanctioned outcome
+
+
+def _spec_sleeve_exposure(positions: dict) -> float:
+    """Sum of current market exposure of OPEN WC positions entered (per the bet journal) at a
+    conviction FV < SPEC_FV_THRESHOLD — the 'speculative sleeve'. Best-effort; returns 0.0 if the
+    journal is missing. Used by the R8 aggregate cap so many sub-0.40 legs can't become one big bet."""
+    entry_fv: dict = {}
+    try:
+        for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            if r.get("status") != "placed":
+                continue
+            inp = r.get("input", {}) or {}
+            if inp.get("side") != "buy" or inp.get("type", "conviction") != "conviction":
+                continue
+            tk, pr = inp.get("ticker"), inp.get("prob")
+            if tk and isinstance(pr, (int, float)):
+                entry_fv[tk] = float(pr)  # chronological file -> latest entry wins
+    except FileNotFoundError:
+        return 0.0
+    total = 0.0
+    for mp in positions.get("market_positions", []):
+        tk = mp.get("ticker", "")
+        if not tk.startswith(("KXWC", "KXMENWORLDCUP")):
+            continue
+        fv = entry_fv.get(tk)
+        if fv is not None and fv < SPEC_FV_THRESHOLD:
+            total += abs(float(mp.get("market_exposure_dollars", 0) or 0))
+    return total
 
 
 def main() -> int:
@@ -163,38 +233,28 @@ def main() -> int:
         # R2/R7 edge — NET of the Kalshi taker fee, so fee-churn never counts as edge
         fee = FEE_RATE * a.price * (1 - a.price)
         edge = a.prob - a.price - fee
-        min_edge = MIN_EDGE_HIGH_FV if a.prob >= HIGH_FV else MIN_EDGE
 
-        # R7 conviction fair-value floor — a conviction bet rides to RESOLUTION, so the
-        # side must actually be likely-ish to WIN. Edge proves the PRICE is wrong, not that
-        # a sub-coinflip outcome happens (Paraguay: FV ~0.37, ~0.13 net edge, expected to
-        # LOSE, lost). Trades are EXEMPT — they exit on a catalyst re-rate and never need the
-        # market to resolve YES. The forbid is checked FIRST so the agent gets the category
-        # error ("expected to lose -> trade or pass"), not a misleading thin-edge message.
+        # R7 v2 — only the DEEP longshot tail is forbidden as a hold-to-resolution conviction.
+        # Between the floor (0.20) and 0.45 the bet is ALLOWED but throttled: a larger required edge
+        # (R2 via _fv_min_edge) and a smaller stake (R3 via _fv_size_shrink). The Paraguay loss was a
+        # SIZING failure, not a selection one — a hard FV>=0.40 ban conflated EV with P(win) and banned
+        # the underdog-value band where mispricing lives. Edge-size and confidence NEVER override this.
+        if a.type == "conviction" and a.prob < CONVICTION_FV_FLOOR:
+            return _reject(
+                args_dict, "R7-fv-floor",
+                f"prob {a.prob:.3f} < {CONVICTION_FV_FLOOR:.2f} deep-longshot floor — too far in the "
+                f"favorite-longshot tail to ride to resolution regardless of edge ({edge:.3f}). "
+                f"Re-submit as '--type trade --cost X' (price <= {TRADE_MAX_PRICE:.2f}) or PASS.")
+
+        # R2 edge gate (conviction only; trades skip it — priced on catalyst re-rate, not resolution).
+        # Required NET edge SCALES with FV: cheap sides fight the favorite-longshot bias, so a bigger
+        # mispricing is required as FV falls (the principled replacement for the old flat 8c borderline).
         if a.type == "conviction":
-            if a.prob < CONVICTION_FV_FLOOR:
-                return _reject(
-                    args_dict, "R7-fv-floor",
-                    f"prob {a.prob:.3f} < {CONVICTION_FV_FLOOR:.2f} conviction floor — this side is "
-                    f"EXPECTED TO LOSE, so a ride-to-resolution conviction bet is forbidden no matter "
-                    f"how large the edge ({edge:.3f}). If a dated catalyst will re-rate the PRICE up, "
-                    f"re-submit as '--type trade --cost X' (price must be <= {TRADE_MAX_PRICE:.2f}; sell "
-                    f"into the catalyst, do NOT hold to resolution); otherwise PASS.")
-            if a.prob < CONVICTION_FV_BORDERLINE:
-                # Borderline band [0.40,0.45): raise the bar. max() COMPOSES with the base/high-FV
-                # rule and never silently lowers it (bands are disjoint vs high-FV >=0.70, so this
-                # only ever lifts the 0.03 base — max() makes the precedence explicit/future-proof).
-                min_edge = max(min_edge, CONVICTION_BORDERLINE_MIN_EDGE)
-
-        # R2 edge gate (conviction only; trades skip it — they are priced on catalyst re-rate,
-        # not FV-to-resolution). Uses the possibly-raised borderline min_edge above.
-        if a.type == "conviction" and edge < min_edge:
-            band = ("" if a.prob >= CONVICTION_FV_BORDERLINE
-                    else f" — borderline FV in [{CONVICTION_FV_FLOOR:.2f},{CONVICTION_FV_BORDERLINE:.2f}) "
-                         f"requires NET edge >= {CONVICTION_BORDERLINE_MIN_EDGE:.2f} to ride to resolution")
-            return _reject(args_dict, "R2-edge",
-                           f"net edge {edge:.3f} < required {min_edge} "
-                           f"(prob {a.prob}, price {a.price}, fee {fee:.4f}){band}")
+            min_edge = _fv_min_edge(a.prob)
+            if edge < min_edge:
+                return _reject(args_dict, "R2-edge",
+                               f"net edge {edge:.3f} < required {min_edge:.2f} for FV {a.prob:.2f} "
+                               f"(price {a.price}, fee {fee:.4f})")
 
         # ---- sizing (code decides, not the agent) ----
         if a.type == "trade":
@@ -208,13 +268,32 @@ def main() -> int:
                 return _reject(args_dict, "R4-trade", f"cost ${a.cost:.2f} > {TRADE_MAX_PCT_OF_CAPITAL:.0%} of capital (${cap:.2f})")
             count = int(a.cost / a.price)
         else:
-            # R3 confidence-scaled Kelly of TOTAL capital, capped
+            # R3 confidence-scaled, FV-SHRUNK Kelly of TOTAL capital, capped.
+            # Low-FV estimates are noisier -> _fv_size_shrink shrinks the stake (size, not a wall).
             kelly_fraction = min(max(a.confidence, KELLY_FRACTION_MIN), KELLY_FRACTION_MAX)
-            kelly_pct = kelly_fraction * edge / (1 - a.price)
+            kelly_pct = kelly_fraction * _fv_size_shrink(a.prob) * edge / (1 - a.price)
             spendable = max(0.0, cash - CASH_FLOOR_DOLLARS)
+            per_bet_cap = MAX_PCT_OF_CAPITAL
+            if a.prob < SPEC_FV_THRESHOLD:
+                per_bet_cap = min(per_bet_cap, SPEC_PER_BET_CAP)  # sub-0.40 single bet capped tighter
             bet_dollars = min(kelly_pct * total_capital,
-                              MAX_PCT_OF_CAPITAL * total_capital,
+                              per_bet_cap * total_capital,
                               spendable)
+            # R8 speculative-sleeve cap — bound aggregate sub-0.40 conviction exposure as a PORTFOLIO
+            # (ruin is a portfolio property; many correlated small dogs must not become one big bet).
+            # Best-effort + FAIL-SAFE: any data error only ever SHRINKS or passes the bet, never enlarges it.
+            if a.prob < SPEC_FV_THRESHOLD and bet_dollars > 0:
+                try:
+                    spec_open = _spec_sleeve_exposure(positions)
+                    room = SPEC_SLEEVE_CAP * total_capital - spec_open
+                    if room <= 0:
+                        return _reject(args_dict, "R8-sleeve",
+                                       f"sub-0.40 sleeve full: open speculative exposure ${spec_open:.2f} "
+                                       f">= {SPEC_SLEEVE_CAP:.0%} of capital "
+                                       f"(${SPEC_SLEEVE_CAP * total_capital:.2f}) — PASS.")
+                    bet_dollars = min(bet_dollars, room)
+                except Exception as exc:  # noqa: BLE001 — sleeve must never block on a data error
+                    print(f"WARNING: R8 sleeve check skipped: {exc}", file=sys.stderr)
             count = int(round(bet_dollars / a.price))
             if count * a.price > spendable:  # rounding may not breach the cash floor
                 count = int(spendable / a.price)
